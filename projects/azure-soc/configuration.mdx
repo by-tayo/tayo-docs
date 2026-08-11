@@ -1,0 +1,54 @@
+---
+title: "Sentinel & Log Ingestion — Connectors and Collection Rules"
+sidebarTitle: "Configuration"
+description: "Creating the Microsoft Sentinel workspace, installing Security Events data connectors, and building the data collection rule that forwards VM logs to Log Analytics."
+icon: "sliders"
+---
+
+The honeypot is generating security events, but they are sitting on the machine. This phase builds the pipeline that carries them into a workspace where they can be queried.
+
+## Creating the Sentinel Workspace
+
+From the Microsoft Sentinel services page, create a workspace. Sentinel does not store data itself — it layers analytics, connectors, and visualisation on top of a Log Analytics workspace, which is where the events actually live.
+
+## Installing Data Connectors
+
+Two data connectors are installed for Windows security events:
+
+<CardGroup cols={2}>
+  <Card title="Security Events via Legacy Agent" icon="plug">
+    The older collection path, based on the Log Analytics agent.
+  </Card>
+
+  <Card title="Windows Security Events via AMA" icon="plug-circle-bolt">
+    The current path, based on the Azure Monitor Agent and configured through data collection rules.
+  </Card>
+</CardGroup>
+
+Both are installed here. In a production deployment you would standardise on AMA — the legacy agent is on a deprecation path — but having both present in a lab makes the difference between the two collection models visible.
+
+<Info>
+  Installing a connector only makes the data source available to the workspace. It does not by itself cause any machine to send logs. That association is the job of the data collection rule.
+</Info>
+
+## Building the Data Collection Rule
+
+Create a data collection rule for the Windows 10 virtual machine, forwarding its logs to the Log Analytics workspace.
+
+The DCR does three things:
+
+1. **Scopes the source** — names which virtual machine the rule applies to
+2. **Selects the data** — states which event types are collected
+3. **Sets the destination** — points collected events at the Log Analytics workspace
+
+Once the rule is in place and the agent has been deployed to the VM, security events begin flowing into the workspace. Expect a delay of several minutes before the first records appear.
+
+<Tip>
+  An empty workspace almost always traces back to the DCR rather than the connector. Confirm the rule exists, that the VM is listed as a resource on it, and that the agent shows as installed on the machine.
+</Tip>
+
+## Verifying Ingestion
+
+The fastest confirmation is a query against the workspace. Once events are arriving, the `SecurityEvent` table is populated and returns records — at which point the pipeline is complete and the lab moves from building to observing.
+
+Querying, enrichment, and visualisation are covered in [KQL, GeoIP & the Attack Map](/projects/azure-soc/validation).

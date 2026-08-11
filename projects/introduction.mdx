@@ -1,0 +1,58 @@
+---
+title: "Projects — Infrastructure, Cloud, and Detection Lab Builds"
+sidebarTitle: "Introduction"
+description: "Long-form documentation of hands-on lab builds: Cisco Packet Tracer networking, GCP, Active Directory, ELK, and an Azure-based SOC environment."
+icon: "layer-group"
+---
+
+The CTF writeups on this site capture short, focused engagements — a single box, a single kill chain, start to finish in an evening. This section is for the other kind of work: builds that take weeks, get torn down and rebuilt, and are worth documenting precisely because the interesting parts happen between the steps.
+
+Each project follows the same structure — what it is, how it's laid out, how it was built, how it was configured, and what actually happened when it was tested.
+
+## Lab Builds
+
+<CardGroup cols={2}>
+  <Card title="Active Directory Homelab" icon="sitemap" href="/projects/ad-homelab/overview">
+    Domain services, users and groups, and Group Policy in a self-hosted Windows environment.
+  </Card>
+
+  <Card title="Azure SOC Lab" icon="cloud" href="/projects/azure-soc/overview">
+    A cloud-hosted security operations environment for log collection, alerting, and investigation.
+  </Card>
+
+  <Card title="ELK Stack" icon="chart-line" href="/projects/elk-stack/overview">
+    Elasticsearch, Logstash, and Kibana for centralised log ingestion, parsing, and dashboards.
+  </Card>
+
+  <Card title="GCP Labs" icon="google" href="/projects/gcp-labs/overview">
+    Google Cloud Platform exercises covering identity, networking, and cloud security controls.
+  </Card>
+
+  <Card title="Cisco Packet Tracer" icon="network-wired" href="/projects/packet-tracer/overview">
+    Simulated network topologies — routing, switching, VLANs, and access control.
+  </Card>
+</CardGroup>
+
+## How Each Project Is Documented
+
+<Steps>
+  <Step title="Overview">
+    The objective of the build, what it covers, and the skills it exercises.
+  </Step>
+  <Step title="Architecture">
+    Topology, addressing or resource layout, and the components involved.
+  </Step>
+  <Step title="Build">
+    Provisioning and setup, in the order it was actually done.
+  </Step>
+  <Step title="Configuration">
+    The settings, policies, and pipelines that make the environment do something useful.
+  </Step>
+  <Step title="Validation">
+    What was tested, what broke, and what would be done differently next time.
+  </Step>
+</Steps>
+
+<Note>
+  These are lab environments built for learning. Configurations here are chosen to make concepts observable, not to serve as production hardening guidance.
+</Note>

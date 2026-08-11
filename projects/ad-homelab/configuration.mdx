@@ -1,0 +1,76 @@
+---
+title: "AD Homelab Configuration — RAS, DHCP & Bulk User Provisioning"
+sidebarTitle: "Configuration"
+description: "Creating the domain admin account, configuring Remote Access with NAT, setting up DHCP scope options, and provisioning over a thousand users with PowerShell."
+icon: "sliders"
+---
+
+With the domain created, this phase makes it usable. Three things happen here: an administrative account gets created, the DC starts routing and addressing for the isolated network, and the directory gets populated with enough accounts to feel like a real organisation.
+
+## Creating the Domain Admin Account
+
+From Windows Administrative Tools, open **Active Directory Users and Computers** and create a dedicated domain administrator account.
+
+This is worth doing rather than living in the built-in administrator account. Working as a purpose-created domain admin is closer to how real environments separate accounts, and it means the built-in account stays available as a fallback if something gets misconfigured.
+
+## Remote Access Server with NAT
+
+Install the **Remote Access** role and configure it with **NAT**.
+
+This is what lets the Windows 11 client sit on a private, isolated virtual network and still reach the internet. The DC translates the client's private source addresses onto its own NAT adapter, forwards the traffic out, and translates the responses back — exactly what a small office router does, running as a Windows role instead.
+
+<Info>
+  NAT is configured against the **NAT adapter** as the public interface, with the internal adapter as the private side. Getting these the wrong way round is a common misstep and produces a client that can reach the DC but nothing beyond it.
+</Info>
+
+## DHCP Server
+
+Install the **DHCP Server** role so the Windows 11 client can obtain an address automatically rather than being configured by hand.
+
+Once the role is installed, create a scope covering the isolated network's address range. The scope is what actually hands out leases; installing the role alone does nothing.
+
+### Scope Options: The Gateway
+
+A leased address on its own is not enough. The client has no default gateway, which means it can talk to machines on its own subnet and nowhere else.
+
+The fix is a **router option** configured in the DHCP scope options, along with a loopback address. Delivering the gateway through DHCP rather than configuring it on the client keeps the client zero-touch — which is the point of running DHCP in the first place.
+
+<Tip>
+  Scope options are set on the scope, not the server, unless you want them applied to every scope. In a single-scope lab the distinction does not bite, but it will the moment you add a second network.
+</Tip>
+
+## Bulk User Provisioning with PowerShell
+
+A domain with two accounts does not exercise anything. This build populates the directory with over a thousand users, driven from a PowerShell script and a names list.
+
+<CardGroup cols={2}>
+  <Card title="1_CREATE_USERS.ps1" icon="terminal">
+    A user-creation script, sourced externally and then edited to implement password security on the accounts it creates.
+  </Card>
+
+  <Card title="names.txt" icon="file-lines">
+    A list of over a thousand names, read by the script to generate the accounts.
+  </Card>
+</CardGroup>
+
+### Execution Policy
+
+PowerShell blocks scripts downloaded from the internet by default. To run the provisioning script, the execution policy is relaxed first:
+
+```powershell
+Set-ExecutionPolicy Unrestricted
+```
+
+Then change into the directory holding the script and its names file, and execute it. The script reads through the names list and creates a domain account for each entry.
+
+<Warning>
+  `Unrestricted` disables a real safety control and is appropriate only in an isolated lab. On any machine that matters, prefer `RemoteSigned`, or unblock the specific file with `Unblock-File` rather than lowering the policy for everything.
+</Warning>
+
+### Verifying the Accounts
+
+After the script finishes, reopen Active Directory Users and Computers. The generated accounts appear in the directory — over a thousand of them — giving the lab a population large enough to make later exercises meaningful rather than trivial.
+
+## Next
+
+The domain is now addressed, routed, and populated. The remaining question is whether a client can actually use it — covered in [Joining & Verifying the Client](/projects/ad-homelab/validation).

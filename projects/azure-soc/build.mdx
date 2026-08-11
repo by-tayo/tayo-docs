@@ -1,0 +1,52 @@
+---
+title: "Deploying the Honeypot — Azure Resources & Exposure"
+sidebarTitle: "Build"
+description: "Creating the Azure resource group, virtual network, and Windows 10 VM, then opening the network security group and disabling the host firewall to expose the honeypot."
+icon: "screwdriver-wrench"
+---
+
+This phase stands up the Azure side of the lab and then deliberately removes its protections. The order matters — build and verify access first, expose second, so that if something breaks you know it was the exposure step rather than the deployment.
+
+<Steps>
+  <Step title="Create the resource group">
+    Create a resource group to hold every service in the lab: the virtual machine, virtual network, Log Analytics workspace, and Sentinel.
+
+    Keeping everything in one group is what makes teardown a single operation later — which matters more than usual here, since leaving this lab running means leaving an exposed machine on the internet.
+  </Step>
+  <Step title="Deploy the Windows 10 VM and virtual network">
+    Create the Windows 10 virtual machine. Azure provisions an accompanying virtual network and network security group alongside it.
+
+    Record the credentials you set during creation — you will need them for RDP in a moment, and this machine is about to become very unfriendly to guess-based access.
+  </Step>
+  <Step title="Open the network security group">
+    Edit the network security group attached to the VM and configure it to allow any port inbound.
+
+    This is the first of the two exposure steps. It removes Azure's edge filtering, so traffic on every port reaches the machine rather than being dropped before it arrives.
+  </Step>
+  <Step title="Connect over RDP">
+    Connect to the VM over RDP using the credentials from deployment. This confirms the machine is reachable and gives you a session to complete the guest-side configuration.
+  </Step>
+  <Step title="Disable the Windows firewall">
+    Inside the VM, open the Windows Defender Firewall settings and turn the firewall off.
+
+    This is the second exposure step, and the one people forget. With the NSG open but the host firewall still running, packets arrive at the machine and are dropped by the guest — producing a honeypot that looks deployed but records almost nothing.
+  </Step>
+</Steps>
+
+## Confirming Exposure
+
+At this point the machine has no network filtering at either layer. There is nothing further to configure to make it findable: internet-wide scanning is continuous and automated, and an exposed Windows host with RDP reachable will start receiving connection attempts on its own.
+
+The honeypot is now generating the data. What it does not yet have is anywhere to send it — which is the next phase.
+
+<Warning>
+  From this moment the VM should be treated as compromised. Do not sign into it with any account you use elsewhere, do not store anything on it, and do not connect it to other resources. Its only job is to be attacked and to log what happens.
+</Warning>
+
+<Tip>
+  Set a budget alert on the subscription before walking away from this. An exposed VM plus log ingestion is inexpensive over a weekend and considerably less so over a forgotten month.
+</Tip>
+
+## Next
+
+With the honeypot live, the [Sentinel & Log Ingestion](/projects/azure-soc/configuration) phase builds the pipeline that captures its security events.

@@ -39,6 +39,73 @@
         ]
       },
       {
+        "tab": "Projects",
+        "groups": [
+          {
+            "group": "Overview",
+            "icon": "folder-tree",
+            "pages": [
+              "projects/introduction"
+            ]
+          },
+          {
+            "group": "Active Directory Homelab",
+            "icon": "sitemap",
+            "pages": [
+              "projects/ad-homelab/overview",
+              "projects/ad-homelab/architecture",
+              "projects/ad-homelab/build",
+              "projects/ad-homelab/configuration",
+              "projects/ad-homelab/validation"
+            ]
+          },
+          {
+            "group": "Azure SOC Lab",
+            "icon": "cloud",
+            "pages": [
+              "projects/azure-soc/overview",
+              "projects/azure-soc/architecture",
+              "projects/azure-soc/build",
+              "projects/azure-soc/configuration",
+              "projects/azure-soc/validation"
+            ]
+          },
+          {
+            "group": "Centralized Logging (ELK)",
+            "icon": "chart-line",
+            "pages": [
+              "projects/elk-stack/overview",
+              "projects/elk-stack/architecture",
+              "projects/elk-stack/build",
+              "projects/elk-stack/configuration",
+              "projects/elk-stack/validation"
+            ]
+          },
+          {
+            "group": "GCP Labs",
+            "icon": "google",
+            "pages": [
+              "projects/gcp-labs/overview",
+              "projects/gcp-labs/architecture",
+              "projects/gcp-labs/build",
+              "projects/gcp-labs/configuration",
+              "projects/gcp-labs/validation"
+            ]
+          },
+          {
+            "group": "Cisco Packet Tracer",
+            "icon": "network-wired",
+            "pages": [
+              "projects/packet-tracer/overview",
+              "projects/packet-tracer/architecture",
+              "projects/packet-tracer/build",
+              "projects/packet-tracer/configuration",
+              "projects/packet-tracer/validation"
+            ]
+          }
+        ]
+      },
+      {
         "tab": "Reference",
         "groups": [
           {

@@ -1,0 +1,97 @@
+---
+title: "Logging Stack Architecture — Components and Data Flow"
+sidebarTitle: "Architecture"
+description: "How Filebeat, Kafka, Logstash, Elasticsearch, Kibana, and Nagios fit together, and which configuration file governs each stage of the pipeline."
+icon: "diagram-project"
+---
+
+Seven services run on a local Docker network, each owning one stage of the journey from a written log line to a searchable document.
+
+## Data Flow
+
+```text
+app/app.py
+    │  writes INFO / WARNING / ERROR lines
+    ▼
+logs/app.log          (bind-mounted directory)
+    │  tailed
+    ▼
+Filebeat 8.11         adds ECS metadata
+    │  publishes
+    ▼
+Kafka (topic: app-logs, KRaft mode)
+    │  consumed
+    ▼
+Logstash 8.11         parses fields, normalizes timestamps
+    │  indexes
+    ▼
+Elasticsearch 8.11    indices: logs-YYYY.MM.DD
+    │  queried
+    ▼
+Kibana 8.11           Discover, saved searches, dashboard
+
+Nagios Core 4.x  ─── check_http ──→ Elasticsearch :9200, Kibana :5601
+```
+
+## Components
+
+| Service | Role |
+| --- | --- |
+| Demo app (Python) | Generates synthetic log lines carrying `user_id` and `latency_ms` values |
+| Filebeat 8.11 | Lightweight shipper; tails the log file and publishes ECS-compatible JSON to Kafka |
+| Apache Kafka | Event bus decoupling producers from consumers; runs in KRaft mode with no Zookeeper |
+| Logstash 8.11 | Consumes from Kafka, parses messages into fields, outputs to Elasticsearch |
+| Elasticsearch 8.11 | Stores and indexes documents into date-based `logs-*` indices |
+| Kibana 8.11 | Search, dashboards, and visualization over the indexed data |
+| Nagios Core 4.x | Independently polls Elasticsearch and Kibana for availability |
+
+## Configuration Files
+
+Each stage of the pipeline is governed by one file, which makes the repository readable in pipeline order:
+
+<CardGroup cols={2}>
+  <Card title="app/app.py" icon="python">
+    Demo application generating synthetic `INFO`, `WARNING`, and `ERROR` lines to `/logs/app.log` inside the container.
+  </Card>
+
+  <Card title="filebeat/filebeat.yml" icon="file-code">
+    Tails the log file, adds ECS metadata, and publishes events to the Kafka topic `app-logs`.
+  </Card>
+
+  <Card title="logstash/pipeline/logstash.conf" icon="filter">
+    Consumes from Kafka, extracts `level`, `msg`, `user_id`, and `latency_ms`, normalizes timestamps, outputs to Elasticsearch.
+  </Card>
+
+  <Card title="nagios/conf.d/elk-services.cfg" icon="heart-pulse">
+    Host and service definitions that `check_http` the Elasticsearch and Kibana containers.
+  </Card>
+
+  <Card title="elasticsearch/watcher/high-error-rate-watch.json" icon="bell">
+    Watcher definition that flags spikes in `ERROR` events.
+  </Card>
+
+  <Card title="docker-compose.yml" icon="docker">
+    Orchestrates all services on a local network and exposes the service ports.
+  </Card>
+</CardGroup>
+
+The `logs/` directory is bind-mounted — the app writes `app.log` there and Filebeat reads it from the same place. Its contents are gitignored, so a fresh clone starts empty.
+
+## Exposed Ports
+
+| Service | Port |
+| --- | --- |
+| Elasticsearch | `9200` |
+| Kibana | `5601` |
+| Kafka | `9092` |
+| Nagios | `8080` |
+
+## Two Kinds of Monitoring
+
+The stack watches itself in two independent ways, which is easy to conflate but worth separating.
+
+Docker Compose **healthchecks** gate startup ordering — Logstash and Kibana wait for Elasticsearch and Kafka to report healthy before starting. This solves a boot-time race condition.
+
+**Nagios** polls Elasticsearch and Kibana over HTTP continuously and surfaces state and trend history in its own UI. This solves ongoing observability.
+
+The first prevents a broken startup; the second tells you when a running service has fallen over. A stack with only healthchecks starts cleanly and then fails silently.

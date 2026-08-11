@@ -1,0 +1,73 @@
+---
+title: "Azure SOC Lab Architecture — Honeypot to Sentinel Pipeline"
+sidebarTitle: "Architecture"
+description: "How security events travel from an exposed Windows 10 VM through a data collection rule into Log Analytics, and how Sentinel turns them into queryable, mappable data."
+icon: "diagram-project"
+---
+
+The architecture is deliberately simple, because the interesting variable in this lab is the attack traffic rather than the infrastructure. One exposed VM produces events; one pipeline carries them somewhere they can be analysed.
+
+## Resource Layout
+
+Everything lives in a single resource group. That is a practical choice as much as an organisational one — when the lab is finished, deleting the resource group removes the exposure and stops the billing in one action.
+
+<CardGroup cols={2}>
+  <Card title="Windows 10 VM" icon="windows">
+    The honeypot. Reachable over RDP for administration, and reachable on everything else by whoever finds it.
+  </Card>
+
+  <Card title="Virtual Network" icon="network-wired">
+    Hosts the VM, with a network security group controlling what inbound traffic is permitted — in this case, all of it.
+  </Card>
+
+  <Card title="Log Analytics Workspace" icon="database">
+    The destination for forwarded security events and the store that KQL queries run against.
+  </Card>
+
+  <Card title="Microsoft Sentinel" icon="shield-halved">
+    The SIEM layer sitting on top of the workspace, providing connectors, analytics, and visualisation.
+  </Card>
+</CardGroup>
+
+## Two Layers of Exposure
+
+A VM in Azure is protected by two independent controls, and this lab removes both. Understanding that they are separate matters, because leaving either one in place produces a honeypot that sees far less traffic than expected.
+
+| Layer | Normal state | In this lab |
+| --- | --- | --- |
+| Network security group | Allows only specific ports inbound | Configured to allow any port inbound |
+| Windows Defender Firewall | Enabled on the guest OS | Turned off entirely |
+
+The NSG is enforced by Azure at the network edge, before traffic reaches the machine. The Windows firewall is enforced by the guest itself. Opening the NSG but leaving the host firewall on means packets arrive at the VM and get silently dropped — the machine looks unreachable and the logs stay quiet.
+
+## The Ingestion Pipeline
+
+```text
+Windows 10 VM
+     │  Windows Security Event log
+     ▼
+Data connectors
+  • Security Events via Legacy Agent
+  • Windows Security Events via AMA
+     │
+     ▼
+Data Collection Rule  ───  defines which events are forwarded, and from which machine
+     │
+     ▼
+Log Analytics Workspace  ───  SecurityEvent table
+     │
+     ▼
+Microsoft Sentinel  ───  KQL queries · GeoIP enrichment · attack map
+```
+
+The data collection rule is the piece that does the real work. Installing a connector makes a data source _available_; the DCR is what binds a specific virtual machine to the workspace and states which events should actually flow.
+
+## Why Security Events
+
+The events that matter for this lab are Windows security events — particularly failed logon attempts. Each one carries the source address of whoever tried, which is what makes geographic enrichment possible later.
+
+An exposed Windows machine on the public internet collects these continuously and without any prompting. The lab does not generate attack traffic; it simply makes itself findable and records what arrives.
+
+<Tip>
+  If events are not appearing in the workspace, check the data collection rule before anything else. A connector showing as installed does not mean any machine has been associated with it.
+</Tip>

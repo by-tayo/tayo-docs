@@ -1,0 +1,46 @@
+---
+title: "Building the Domain Controller — AD DS Installation & Promotion"
+sidebarTitle: "Build"
+description: "Provisioning the Windows Server 2022 VM in VMware Workstation Pro, configuring dual network adapters, and installing Active Directory Domain Services to create the domain."
+icon: "screwdriver-wrench"
+---
+
+This phase takes a bare Windows Server 2022 VM and turns it into a functioning domain controller. Nothing here is complicated on its own, but the order matters — networking gets configured before the AD DS role goes on, because promotion bakes in the machine's name and address.
+
+<Steps>
+  <Step title="Provision the server VM">
+    Create the Windows Server 2022 virtual machine in VMware Workstation Pro 17 and complete the initial out-of-box setup. This machine becomes the domain controller and the default gateway for the isolated network, so give it enough resources to comfortably run four roles at once.
+  </Step>
+  <Step title="Add the second network adapter">
+    Configure two network adapters on the VM. Attach the first to NAT for internet access, and the second to an internal, isolated network that only the lab machines can reach.
+
+    In VMware Workstation the adapter type is set per-NIC in the VM settings — confirm both are present and connected before booting into the guest, since a missing adapter is easier to fix here than to diagnose later from inside Windows.
+  </Step>
+  <Step title="Configure the internal adapter">
+    Inside Windows, open the network connections and configure the internal adapter manually with a static IP address, subnet mask, and DNS setting. The NAT adapter can be left on automatic — VMware's NAT service will supply its address.
+
+    Naming the adapters at this point (`Internal` and `NAT`, or similar) saves confusion for the rest of the build, since you will be returning to these settings when configuring DHCP and RAS.
+  </Step>
+  <Step title="Install Active Directory Domain Services">
+    From Server Manager, add the AD DS role. The installation itself only stages the binaries — it does not create a domain.
+
+    DNS is installed alongside AD DS as a dependency. This is expected: Active Directory relies on DNS to publish the service records that clients use to locate domain controllers.
+  </Step>
+  <Step title="Promote the server and create the domain">
+    After the role installs, run the promotion wizard to create a new forest and domain. This is the step that actually brings Active Directory into existence, and the server reboots at the end of it.
+
+    Once it comes back up, check the Local Server properties in Server Manager — the domain now appears in place of the previous workgroup, which is the quickest confirmation that promotion succeeded.
+  </Step>
+</Steps>
+
+## Verifying the Domain
+
+The Local Server view in Server Manager is the first checkpoint. Before promotion the machine belongs to a workgroup; after promotion the properties list the domain name. If it still reads as a workgroup, promotion did not complete and there is no point continuing to the role configuration.
+
+<Warning>
+  Configure the static IP on the internal adapter **before** promoting the server. Promotion registers the domain controller's DNS records against its current address, and changing that address afterwards means cleaning up stale records.
+</Warning>
+
+## What Comes Next
+
+At this point the domain exists but nothing uses it. The client cannot lease an address, cannot reach the internet, and there are no accounts beyond the built-in administrator. Those are handled in [Roles & User Provisioning](/projects/ad-homelab/configuration).
