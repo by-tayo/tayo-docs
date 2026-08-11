@@ -1,0 +1,108 @@
+---
+title: "Byte Lotus Flags — User and Root Flag Locations"
+sidebarTitle: "Flags"
+description: "Flag locations and submission guide for THM Byte Lotus, including user flag and root flag paths after completing exploitation and privilege escalation."
+---
+
+Every TryHackMe room marks your progress through flag capture. Flags are small text files containing a unique hash that you submit on the TryHackMe platform to prove you've reached that level of access. Byte Lotus follows the standard two-flag format: a user flag accessible once you gain initial shell access as a low-privilege account, and a root flag that only becomes readable after successful privilege escalation. This page tells you exactly where to find them both.
+
+<Info>
+  All flags must be submitted on the TryHackMe platform to receive credit. Simply reading the flag value on this page (or anyone else's writeup) won't mark the task as complete — you need to achieve the access yourself and submit the hash directly in the room.
+</Info>
+
+## User Flag
+
+The user flag is stored in the home directory of the primary non-root user on the box. After gaining your initial shell and stabilising it, navigate to `/home` to see which user accounts exist, then read the flag:
+
+```bash
+ls /home
+```
+
+```text
+lotus
+```
+
+```bash
+cat /home/lotus/user.txt
+```
+
+```text
+THM{**********************************}
+```
+
+<Note>
+  The actual flag value above is intentionally hidden. You need to gain shell access to the `lotus` user account (or sufficient read permissions) and retrieve it directly from the target machine. Once you have it, submit it in the **Task 2** answer field on the TryHackMe room page.
+</Note>
+
+If you land your initial shell as `www-data` and find you can't read the flag directly, check whether:
+
+- There are credentials in the web application's config files (e.g. `/var/www/html/config.php`) that work for the `lotus` account via SSH or `su`
+- The user flag directory is world-readable despite the file being user-readable only
+- A lateral movement step is required before the escalation to root
+
+```bash
+# Attempt SSH login if you recover credentials
+ssh lotus@<TARGET_IP>
+
+# Or switch user from your existing shell
+su - lotus
+```
+
+## Root Flag
+
+The root flag lives in the root user's home directory. It's only accessible after you've fully escalated privileges to `uid=0(root)`. From your root shell:
+
+```bash
+cat /root/root.txt
+```
+
+```text
+THM{**********************************}
+```
+
+You can also verify your access level one final time before reading the flag:
+
+```bash
+id && cat /root/root.txt
+```
+
+```text
+uid=0(root) gid=0(root) groups=0(root)
+THM{**********************************}
+```
+
+Submit this value in the **Task 3** answer field on the TryHackMe room page to complete the room.
+
+## Room Complete 🎉
+
+<Tip>
+  Congratulations on rooting Byte Lotus! If you enjoyed this room, here are some TryHackMe rooms worth trying next to keep building your skills:
+
+  - **[Wonderland](https://tryhackme.com/room/wonderland)** — a creative Linux box with a non-standard privesc chain
+  - **[Creative](https://tryhackme.com/room/creative)** — SSRF-based initial access with a clean escalation path
+  - **[RootMe](https://tryhackme.com/room/rrootme)** — a quick, beginner-friendly file upload to root
+  - **[Pickle Rick](https://tryhackme.com/room/picklerick)** — classic command injection and Linux exploration
+
+  For a structured progression, the **Jr Penetration Tester** learning path covers every technique used in Byte Lotus in depth — highly recommended if any step in this room felt like guesswork.
+</Tip>
+
+---
+
+## Navigation
+
+<CardGroup cols={2}>
+  <Card
+    title="Room Overview"
+    icon="map"
+    href="/tryhackme/byte-lotus/overview"
+  >
+    Return to the Byte Lotus room overview, attack chain summary, and phase breakdown.
+  </Card>
+  <Card
+    title="Methodology"
+    icon="list-check"
+    href="/reference/methodology"
+  >
+    Review the general penetration testing methodology and checklist used across all writeups on this site.
+  </Card>
+</CardGroup>

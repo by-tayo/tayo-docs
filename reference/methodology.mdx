@@ -1,0 +1,139 @@
+---
+title: "CTF Methodology — Systematic Approach to Capture the Flag"
+sidebarTitle: "Methodology"
+description: "A structured penetration testing methodology for CTF challenges: reconnaissance, enumeration, exploitation, privilege escalation, and flag capture."
+---
+
+A repeatable methodology is the difference between solving a room efficiently and spinning your wheels for hours. Rather than jumping straight at whatever looks interesting, a structured approach ensures you cover every angle, document what you find, and always know your next move. The steps below reflect a standard penetration testing lifecycle adapted for CTF environments — follow them in order and you will rarely get stuck without knowing why.
+
+## The Attack Chain
+
+<Steps>
+  <Step title="Reconnaissance">
+    Gather as much information about the target as possible before touching it directly.
+
+    **Passive recon** involves collecting information without sending packets to the target — searching public records, WHOIS lookups, DNS enumeration, and reviewing any hints provided in the room description.
+
+    **Active recon** means making direct contact: running an `nmap` port scan, probing open services, and fingerprinting software versions. Start broad, then drill down.
+
+    ```bash
+    nmap -sC -sV -oN recon/initial.txt <TARGET_IP>
+    ```
+  </Step>
+  <Step title="Enumeration">
+    Once you know what's running, go deeper into each service. Enumeration is where most flags are actually unlocked.
+
+    - **Port 80/443** → spider directories with `gobuster` or `feroxbuster`, check page source, look for hidden forms and comments
+    - **Port 21 (FTP)** → test anonymous login, list files
+    - **Port 22 (SSH)** → note version, check for known CVEs
+    - **Port 445 (SMB)** → enumerate shares with `smbclient` or `enum4linux`
+    - **Port 3306 (MySQL)** → attempt default credentials
+
+    Document every version number — they are your leads for exploitation.
+  </Step>
+  <Step title="Exploitation">
+    Use what enumeration revealed to gain your first foothold on the system. Common vectors include:
+
+    - Known CVEs matched against discovered software versions (`searchsploit`)
+    - Default or weak credentials on exposed services
+    - Web vulnerabilities — SQLi, LFI, RFI, command injection, file upload bypass
+    - Misconfigured services
+
+    Your goal here is a shell — even a limited, low-privilege one. Everything after this step builds on that initial access.
+  </Step>
+  <Step title="Post-Exploitation">
+    Stabilize your access before doing anything else. A raw netcat shell will drop on you at the worst moment.
+
+    ```bash
+    # Upgrade a basic shell to a fully interactive TTY
+    python3 -c 'import pty; pty.spawn("/bin/bash")'
+    export TERM=xterm
+    # Then background with Ctrl+Z, run: stty raw -echo; fg
+    ```
+
+    From here, perform lateral movement if needed — look for other users, reused credentials, readable private keys, and internal services only accessible from inside the machine.
+  </Step>
+  <Step title="Privilege Escalation">
+    Work toward root (or Administrator on Windows). Run automated enumeration tools first to get the lay of the land, then investigate manually.
+
+    Common PrivEsc vectors:
+    - SUID/SGID binaries (`find / -perm -4000 2>/dev/null`)
+    - Sudo rules (`sudo -l`)
+    - Writable cron jobs or scripts run by root
+    - Kernel exploits (last resort)
+    - Weak file permissions on sensitive files
+
+    Cross-reference findings against [GTFOBins](https://gtfobins.github.io) for instant escalation paths via misused binaries.
+  </Step>
+  <Step title="Flag Capture">
+    Flags on TryHackMe are typically stored in predictable locations. Once you have the right permissions, collect them.
+
+    ```bash
+    # User flag
+    cat /home/<username>/user.txt
+
+    # Root flag
+    cat /root/root.txt
+    ```
+
+    Submit each flag in the TryHackMe room answer field. Some rooms hide flags in unusual locations — check environment variables (`env`), history files, and database records if the expected paths come up empty.
+  </Step>
+</Steps>
+
+---
+
+## Mindset
+
+A good methodology only works if you have the right habits around it.
+
+- **Take notes constantly.** You will forget what you tried twenty minutes ago. Write down every open port, every credential, every failed attempt. A finding that seems useless now might be the key later.
+- **Stay organized.** Create a folder per room with subfolders for `recon/`, `exploits/`, and `loot/`. Keep scan output files, not just screenshots.
+- **Set a time-box for rabbit holes.** If you have spent more than 30 minutes on a single path with no progress, step back and re-read your notes. CTF designers hide the path — they don't usually bury it in genuinely obscure trivia.
+- **Read the room description and hints carefully.** TryHackMe rooms often embed the intended attack vector in the flavor text.
+- **Search for everything.** Version number, service name, error message — paste it into Google and see what shows up. You are not expected to have every CVE memorized.
+
+---
+
+## Note-Taking Template
+
+Copy this template at the start of every room. Fill it in as you progress so your notes are always one command away.
+
+```markdown
+# Room Name
+
+**Platform:** TryHackMe  
+**Difficulty:** Medium  
+**IP:** <TARGET_IP>  
+
+## Recon
+- Open ports:
+- Interesting services:
+
+## Exploitation
+- Vulnerability found:
+- Method:
+
+## Privilege Escalation
+- Vector:
+
+## Flags
+- User flag: `cat /home/<user>/user.txt`
+- Root flag: `cat /root/root.txt`
+```
+
+<Tip>
+  [Obsidian](https://obsidian.md) is an excellent choice for CTF note-taking. Its markdown-native editor, bidirectional linking, and graph view make it easy to connect techniques across rooms. Create a vault per platform and use tags like `#privesc`, `#web`, and `#tryhackme` to build a personal knowledge base you can search across every machine you've ever rooted.
+</Tip>
+
+---
+
+## Keep Exploring
+
+<CardGroup cols={2}>
+  <Card title="Tools Reference" icon="wrench" href="/reference/tools">
+    Every tool used in these writeups — with commands and usage notes.
+  </Card>
+  <Card title="Terminology Glossary" icon="book-open" href="/reference/terminology">
+    Definitions for CTF and penetration testing terms used across these writeups.
+  </Card>
+</CardGroup>

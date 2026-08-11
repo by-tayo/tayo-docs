@@ -1,0 +1,75 @@
+---
+title: "THM Byte Lotus — Room Overview & Walkthrough Guide"
+sidebarTitle: "Overview"
+description: "Complete walkthrough guide for the TryHackMe Byte Lotus room covering enumeration, exploitation, and privilege escalation on a Linux target."
+---
+
+Byte Lotus is a medium-difficulty Linux room on TryHackMe that challenges you to chain together multiple penetration testing techniques — from initial reconnaissance and web application exploitation through to local privilege escalation and root access. Whether you're sharpening your enumeration workflow or practising privesc methodology, this room delivers a satisfying, realistic attack surface that mirrors real-world Linux environments.
+
+<CardGroup cols={2}>
+  <Card title="Platform" icon="flag">
+    TryHackMe
+  </Card>
+  <Card title="Difficulty" icon="gauge-high">
+    Medium
+  </Card>
+  <Card title="Operating System" icon="linux">
+    Linux
+  </Card>
+  <Card title="Category" icon="shield-halved">
+    Penetration Testing
+  </Card>
+</CardGroup>
+
+## Attack Chain Overview
+
+The Byte Lotus room follows a classic penetration testing kill chain. You start by enumerating open ports and exposed services, discover a vulnerable web application, exploit it to land an initial shell, perform local enumeration on the compromised host, and finally escalate privileges to root. Each phase builds directly on the findings of the previous one — skipping steps or rushing past enumeration will leave you missing the clues the room hides in plain sight.
+
+```text
+Reconnaissance → Web Exploitation → Shell Stabilisation → Privilege Escalation → Flags
+```
+
+## Walkthrough Phases
+
+<Steps>
+  <Step title="Reconnaissance">
+    Begin with thorough port scanning using `nmap` to map the attack surface, followed by web directory enumeration with `gobuster` or `feroxbuster`. The goal here is to identify every open port, running service, and accessible web path before touching anything interactively.
+
+    → [Recon & Enumeration](/tryhackme/byte-lotus/recon)
+  </Step>
+  <Step title="Exploitation">
+    Analyse the discovered web application for common vulnerabilities — misconfigurations, injectable inputs, exposed upload functionality, or weak credentials. Use your findings to gain an initial low-privilege shell on the target, then stabilise it for comfortable interaction.
+
+    → [Exploitation & Initial Access](/tryhackme/byte-lotus/exploitation)
+  </Step>
+  <Step title="Privilege Escalation">
+    Once on the box, run automated enumeration tools like `linpeas` alongside manual checks for sudo misconfigurations, SUID binaries, writable cron jobs, and sensitive files. Identify the escalation vector and exploit it to reach root.
+
+    → [Privilege Escalation](/tryhackme/byte-lotus/privilege-escalation)
+  </Step>
+  <Step title="Flags">
+    Locate and capture the user flag under `/home/<username>/user.txt` and the root flag at `/root/root.txt`. Submit both on the TryHackMe platform to complete the room.
+
+    → [Flags & Submission](/tryhackme/byte-lotus/flags)
+  </Step>
+</Steps>
+
+## Prerequisites
+
+Before starting Byte Lotus you should be comfortable with the following:
+
+- Running `nmap` scans and interpreting service version output
+- Basic web application testing (directory busting, inspecting HTTP responses)
+- Setting up and catching reverse shells
+- Linux file system navigation and permissions model
+- Reading and acting on `linpeas` or `linenum` output
+
+If any of those areas feel shaky, spending time on TryHackMe's Pre-Security or Jr Penetration Tester paths first will make this room significantly more approachable.
+
+<Info>
+  This writeup is for educational purposes. Only access systems you have explicit permission to test.
+</Info>
+
+<Note>
+  [Access the Byte Lotus room on TryHackMe](https://tryhackme.com/room/bytelotus)
+</Note>

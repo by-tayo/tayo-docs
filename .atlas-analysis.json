@@ -1,17 +1,11 @@
 {
-  "$schema": "https://mintlify.com/docs.json",
+  "projectType": "general",
+  "projectName": "Tayo's CTF Writeups",
+  "projectDescription": "A collection of CTF (Capture the Flag) challenge writeups, focused on TryHackMe rooms including the Byte Lotus series.",
   "theme": "luma",
-  "name": "Tayo's CTF Writeups",
-  "colors": {
-    "primary": "#3B82F6",
-    "light": "#93C5FD",
-    "dark": "#1E3A5F"
-  },
-  "favicon": "https://media.brand.dev/483ee27f-08fb-4d32-842d-86b4c40f9fb4.png",
-  "logo": {
-    "light": "https://media.brand.dev/07fcb57b-76a5-49f6-abdb-740da69c791f.svg",
-    "dark": "https://media.brand.dev/07fcb57b-76a5-49f6-abdb-740da69c791f.svg"
-  },
+  "primaryColor": "#3B82F6",
+  "lightColor": "#93C5FD",
+  "darkColor": "#1E3A5F",
   "navigation": {
     "tabs": [
       {
@@ -53,15 +47,12 @@
       }
     ]
   },
-  "navbar": {
-    "primary": {
-      "type": "github",
-      "href": "https://github.com/by-tayo/ctf-writeups"
-    }
-  },
-  "footer": {
-    "socials": {
-      "github": "https://github.com/by-tayo"
-    }
-  }
+  "keyFeatures": [
+    "Step-by-step CTF challenge walkthroughs",
+    "TryHackMe room writeups",
+    "Recon, exploitation, and privilege escalation techniques",
+    "Tool usage references",
+    "Flag capture methodology"
+  ],
+  "publicApiSurface": []
 }

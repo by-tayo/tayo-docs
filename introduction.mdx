@@ -1,0 +1,61 @@
+---
+title: "Tayo's CTF Writeups — TryHackMe & Beyond"
+sidebarTitle: "Introduction"
+description: "A collection of hands-on CTF challenge walkthroughs covering TryHackMe rooms, exploitation techniques, and hacking methodology."
+---
+
+Welcome to Tayo's CTF Writeups — a hands-on collection of detailed walkthroughs for Capture the Flag challenges, with a focus on TryHackMe rooms and the Byte Lotus series. Whether you're working through a room for the first time or revisiting a technique you want to sharpen, these writeups walk you through every phase of the attack chain: reconnaissance, enumeration, exploitation, and post-exploitation. The goal is simple — to make offensive security concepts concrete, repeatable, and accessible to anyone willing to put in the work.
+
+<CardGroup cols={2}>
+  <Card
+    title="Byte Lotus"
+    icon="shield"
+    href="tryhackme/byte-lotus/overview"
+  >
+    Dive into the Byte Lotus TryHackMe room — a multi-stage challenge covering web exploitation, privilege escalation, and CTF fundamentals.
+  </Card>
+  <Card
+    title="Reconnaissance"
+    icon="magnifying-glass"
+    href="tryhackme/byte-lotus/recon"
+  >
+    Follow the recon phase of Byte Lotus step by step, from initial scanning to service enumeration and attack surface mapping.
+  </Card>
+  <Card
+    title="Methodology"
+    icon="list-check"
+    href="reference/methodology"
+  >
+    Explore the structured CTF methodology used across every writeup — a repeatable framework for approaching any challenge with confidence.
+  </Card>
+  <Card
+    title="Tools"
+    icon="screwdriver-wrench"
+    href="reference/tools"
+  >
+    Browse the toolkit behind these writeups, including the scanners, exploit frameworks, and utilities referenced throughout the walkthroughs.
+  </Card>
+</CardGroup>
+
+## How to Use These Writeups
+
+These pages are designed to be read alongside an active terminal. Spin up the relevant TryHackMe room, then follow each section in order — commands are shown exactly as run so you can reproduce every step.
+
+<Steps>
+  <Step title="Start the Target Room">
+    Head to [TryHackMe](https://tryhackme.com) and deploy the target room referenced at the top of the writeup. Connect via OpenVPN or the TryHackMe AttackBox before proceeding.
+  </Step>
+  <Step title="Follow the Recon Phase">
+    Begin with the reconnaissance section. Run each enumeration command against your deployed instance and compare your output to what's documented — small differences are normal and worth investigating.
+  </Step>
+  <Step title="Work Through Exploitation">
+    Move into the exploitation sections once enumeration is complete. Each step explains not just *what* to run, but *why* it works — read the explanations before copying commands.
+  </Step>
+  <Step title="Check the Methodology Reference">
+    If you get stuck or want to approach a step differently, consult the [Methodology](/reference/methodology) page for a higher-level view of the attack chain and alternative techniques.
+  </Step>
+</Steps>
+
+<Tip>
+  The best way to follow along is to have an active TryHackMe subscription and your own deployed instance of the room. Free accounts can still access many rooms — sign up at [tryhackme.com](https://tryhackme.com) and deploy the target before you start reading.
+</Tip>

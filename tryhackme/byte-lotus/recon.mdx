@@ -1,0 +1,174 @@
+---
+title: "Byte Lotus Reconnaissance — Scanning & Enumeration"
+sidebarTitle: "Recon"
+description: "Reconnaissance phase for THM Byte Lotus: nmap port scanning, service enumeration, and web directory discovery techniques."
+---
+
+Reconnaissance is the foundation of every successful penetration test. Before you touch a single service or probe a single login form, you need a complete picture of the target's attack surface. In this phase you'll use `nmap` to map open ports and identify running services, then pivot to web enumeration tools to discover hidden directories and files that the target isn't advertising. Thorough recon here directly determines how smooth the exploitation phase will go — don't rush it.
+
+## Port Scanning
+
+Start with a focused scan against the most common ports to get quick results, then follow up with a full TCP sweep to ensure nothing is hiding on a high port.
+
+### Initial Scan
+
+```bash
+nmap -sC -sV -oN nmap/initial.txt <TARGET_IP>
+```
+
+The `-sC` flag runs the default NSE scripts (banner grabbing, basic version detection, common vuln checks) and `-sV` probes service versions. Saving output with `-oN` means you always have a reference to come back to without re-scanning.
+
+### Full Port Scan
+
+```bash
+nmap -p- -T4 --min-rate 5000 -oN nmap/full.txt <TARGET_IP>
+```
+
+Scanning all 65 535 ports with a high minimum rate ensures nothing on a non-standard port is missed. Run this in the background while you start analysing the initial scan results.
+
+### Sample nmap Output
+
+```text
+Starting Nmap 7.94 ( https://nmap.org )
+Nmap scan report for <TARGET_IP>
+Host is up (0.041s latency).
+
+PORT     STATE SERVICE VERSION
+22/tcp   open  ssh     OpenSSH 8.2p1 Ubuntu 4ubuntu0.9 (Ubuntu Linux; protocol 2.0)
+| ssh-hostkey:
+|   3072 fa:b0:03:aa:2a:5f:6e:1d:9e:c4:7e:99:21:cd:b2:0e (RSA)
+|   256 6b:2c:44:f1:a5:88:d3:0a:7e:b8:c4:5f:90:3e:11:22 (ECDSA)
+|_  256 11:09:aa:f3:5c:44:c2:38:80:1b:e6:b4:aa:f3:44:2c (ED25519)
+80/tcp   open  http    Apache httpd 2.4.41 ((Ubuntu))
+|_http-title: Byte Lotus — Welcome
+|_http-server-header: Apache/2.4.41 (Ubuntu)
+| http-methods:
+|_  Supported Methods: GET HEAD POST OPTIONS
+8080/tcp open  http    Apache Tomcat 9.0.65
+|_http-title: Apache Tomcat/9.0.65
+Service Info: OS: Linux; CPE: cpe:/o:linux:linux_kernel
+
+Nmap done: 1 IP address (1 host up) scanned in 14.32 seconds
+```
+
+Key takeaways from the initial scan:
+
+- **Port 22 (SSH)** — OpenSSH 8.2p1. Not directly exploitable with public CVEs at this version, but worth noting for later credential use.
+- **Port 80 (HTTP)** — Apache 2.4.41 serving a web application. Primary attack surface.
+- **Port 8080 (HTTP)** — Apache Tomcat 9.0.65. A secondary web service worth exploring — Tomcat manager endpoints are a classic entry point.
+
+<Tip>
+  Create a dedicated working directory for each room and always save scan output to files. A structure like `mkdir -p nmap web creds loot` at the start keeps everything organised and makes writing the final report far easier.
+</Tip>
+
+## Web Enumeration
+
+With HTTP services on ports 80 and 8080 confirmed, fire up a directory brute-force to uncover hidden paths, admin panels, upload endpoints, and configuration files.
+
+### Gobuster — Port 80
+
+```bash
+gobuster dir \
+  -u http://<TARGET_IP> \
+  -w /usr/share/wordlists/dirbuster/directory-list-2.3-medium.txt \
+  -x php,txt,html \
+  -o web/gobuster_80.txt
+```
+
+### Gobuster — Port 8080 (Tomcat)
+
+```bash
+gobuster dir \
+  -u http://<TARGET_IP>:8080 \
+  -w /usr/share/wordlists/dirbuster/directory-list-2.3-medium.txt \
+  -x jsp,war,txt \
+  -o web/gobuster_8080.txt
+```
+
+### Sample Gobuster Output (Port 80)
+
+```text
+/index.php            (Status: 200) [Size: 3842]
+/login.php            (Status: 200) [Size: 1271]
+/upload               (Status: 301) [Size: 315] [--> http://<TARGET_IP>/upload/]
+/admin                (Status: 403) [Size: 277]
+/config.php           (Status: 200) [Size: 0]
+/includes             (Status: 301) [Size: 317] [--> http://<TARGET_IP>/includes/]
+/robots.txt           (Status: 200) [Size: 62]
+/.htaccess            (Status: 403) [Size: 277]
+```
+
+Interesting findings to investigate further:
+
+- `/login.php` — a login form; candidate for default credentials or SQLi
+- `/upload` — a file upload endpoint; a classic foothold vector
+- `/admin` — forbidden but confirmed to exist; may be bypassable
+- `robots.txt` — always worth reading; developers often accidentally disclose hidden paths here
+
+### Feroxbuster (Recursive Alternative)
+
+```bash
+feroxbuster \
+  -u http://<TARGET_IP> \
+  -w /usr/share/wordlists/seclists/Discovery/Web-Content/raft-medium-directories.txt \
+  -x php,txt,html,bak \
+  -r \
+  -o web/feroxbuster_80.txt
+```
+
+`feroxbuster` performs recursive directory discovery by default, which can surface nested paths that a single-depth `gobuster` run would miss.
+
+## Service Enumeration
+
+### SSH Banner Grab
+
+```bash
+nc -nv <TARGET_IP> 22
+```
+
+```text
+SSH-2.0-OpenSSH_8.2p1 Ubuntu-4ubuntu0.9
+```
+
+The SSH version confirms an Ubuntu host. Keep this port in mind — if you recover credentials during exploitation, SSH is often the cleanest way to get a stable session.
+
+### HTTP Header Inspection
+
+```bash
+curl -sI http://<TARGET_IP>
+```
+
+```text
+HTTP/1.1 200 OK
+Date: Mon, 01 Jan 2024 12:00:00 GMT
+Server: Apache/2.4.41 (Ubuntu)
+X-Powered-By: PHP/7.4.3
+Content-Type: text/html; charset=UTF-8
+```
+
+The `X-Powered-By: PHP/7.4.3` header reveals the PHP version. PHP 7.4.x has known vulnerabilities worth checking, and knowing the backend language informs what extensions to fuzz for (`.php`, `.phtml`, `.php5`).
+
+### Robots.txt
+
+```bash
+curl -s http://<TARGET_IP>/robots.txt
+```
+
+```text
+User-agent: *
+Disallow: /backup/
+Disallow: /dev/
+```
+
+The `/backup/` and `/dev/` disallowed paths are worth probing manually — developers frequently leave sensitive files (database dumps, old config files, source archives) in backup directories.
+
+<Note>
+  **Recon Findings Summary**
+
+  - Open ports: **22** (SSH), **80** (HTTP/Apache), **8080** (HTTP/Tomcat)
+  - Web paths of interest: `/login.php`, `/upload/`, `/admin/`, `/backup/`, `/dev/`
+  - Backend: PHP 7.4.3 on Apache 2.4.41
+  - OS: Ubuntu Linux (confirmed via SSH banner and nmap CPE)
+
+  Carry these findings into the exploitation phase — the upload endpoint and login form are the most promising initial targets.
+</Note>
