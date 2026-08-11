@@ -1,7 +1,7 @@
 ---
 title: "Byte Lotus Privilege Escalation — Getting Root Access"
 sidebarTitle: "Privilege Escalation"
-description: "Privilege escalation phase for THM Byte Lotus: local enumeration, SUID binaries, sudo misconfigurations, and reaching root."
+description: "Privilege escalation phase for THM Byte Lotus: local enumeration with linpeas, SUID binary abuse, sudo misconfigurations, and techniques for reaching root."
 ---
 
 You're on the box with a low-privilege shell — now it's time to turn that foothold into full root access. Privilege escalation on Linux almost always comes down to one of a handful of vectors: a misconfigured `sudo` policy, a SUID binary that can be abused, a world-writable cron job, credentials left in a config file, or a running service vulnerable to a known exploit. The goal of this phase is systematic enumeration followed by targeted exploitation of whatever the box surfaces.
