@@ -1,61 +1,63 @@
 ---
-title: "Tayo's CTF Writeups — TryHackMe Walkthroughs & Beyond"
+title: "tayo-docs — Security Lab Builds & CTF Writeups"
 sidebarTitle: "Introduction"
-description: "Hands-on CTF walkthroughs for TryHackMe rooms — covering reconnaissance, exploitation, and privilege escalation with clear step-by-step guidance."
+description: "Security engineering lab builds and CTF writeups by TAYO — Active Directory, Azure SOC, ELK, GCP, and network labs, plus walkthroughs of CTF rooms."
 ---
 
-Welcome to Tayo's CTF Writeups — a hands-on collection of detailed walkthroughs for Capture the Flag challenges, with a focus on TryHackMe rooms and the Byte Lotus series. Whether you're working through a room for the first time or revisiting a technique you want to sharpen, these writeups walk you through every phase of the attack chain: reconnaissance, enumeration, exploitation, and post-exploitation. The goal is simple — to make offensive security concepts concrete, repeatable, and accessible to anyone willing to put in the work.
+This site documents two kinds of hands-on security work.
+
+**Lab builds** are the long-running ones — domain controllers, SIEM pipelines, cloud environments. They take weeks, get torn down and rebuilt, and the interesting parts happen between the steps. Each is documented from architecture through validation, including what broke.
+
+**CTF writeups** are the short, focused engagements — a single box, a single kill chain, worked start to finish.
+
+Different rhythms, same goal: making the work reproducible rather than just finished.
 
 <CardGroup cols={2}>
-  <Card
-    title="Byte Lotus"
-    icon="shield"
-    href="tryhackme/byte-lotus/overview"
-  >
-    Dive into the Byte Lotus TryHackMe room — a multi-stage challenge covering web exploitation, privilege escalation, and CTF fundamentals.
+  <Card title="Lab Builds" icon="layer-group" href="/projects/introduction">
+    Active Directory, Azure SOC, ELK, GCP, and network labs — documented from architecture through validation.
   </Card>
-  <Card
-    title="Reconnaissance"
-    icon="magnifying-glass"
-    href="tryhackme/byte-lotus/recon"
-  >
-    Follow the recon phase of Byte Lotus step by step, from initial scanning to service enumeration and attack surface mapping.
+
+  <Card title="CTF Writeups" icon="flag" href="/tryhackme/byte-lotus/overview">
+    Room walkthroughs covering reconnaissance, exploitation, and privilege escalation.
   </Card>
-  <Card
-    title="Methodology"
-    icon="list-check"
-    href="reference/methodology"
-  >
-    Explore the structured CTF methodology used across every writeup — a repeatable framework for approaching any challenge with confidence.
+
+  <Card title="Methodology" icon="list-check" href="/reference/methodology">
+    The structured approach used across the writeups — a repeatable framework for working through a challenge.
   </Card>
-  <Card
-    title="Tools"
-    icon="screwdriver-wrench"
-    href="reference/tools"
-  >
-    Browse the toolkit behind these writeups, including the scanners, exploit frameworks, and utilities referenced throughout the walkthroughs.
+
+  <Card title="Tools" icon="screwdriver-wrench" href="/reference/tools">
+    Scanners, exploit frameworks, and utilities referenced throughout.
   </Card>
 </CardGroup>
 
-## How to Use These Writeups
+## Lab Builds
 
-These pages are designed to be read alongside an active terminal. Spin up the relevant TryHackMe room, then follow each section in order — commands are shown exactly as run so you can reproduce every step.
+Infrastructure and detection environments built from scratch, each following the same five-part structure: overview, architecture, build, configuration, and validation.
+
+| Project | Focus |
+| --- | --- |
+| [Active Directory Homelab](/projects/ad-homelab/overview) | Server 2022 domain controller, DNS, DHCP, NAT, and bulk user provisioning |
+| [Azure SOC Lab](/projects/azure-soc/overview) | Microsoft Sentinel, a live honeypot, KQL, and a GeoIP attack map |
+| [Centralized Logging](/projects/elk-stack/overview) | Filebeat, Kafka, Logstash, Elasticsearch, Kibana, and Nagios |
+| [GCP Labs](/projects/gcp-labs/overview) | Compute, IAM, networking, and containerized deployment |
+| [Cisco Packet Tracer](/projects/packet-tracer/overview) | Routing, switching, VLANs, and access control |
+
+## CTF Writeups
+
+Walkthroughs written to be read alongside an active terminal. Commands appear as they were run, so each step can be reproduced against your own deployed instance.
 
 <Steps>
-  <Step title="Start the Target Room">
-    Head to [TryHackMe](https://tryhackme.com) and deploy the target room referenced at the top of the writeup. Connect via OpenVPN or the TryHackMe AttackBox before proceeding.
+  <Step title="Deploy the room">
+    Start the target room referenced at the top of the writeup and connect via VPN or a browser-based attack box.
   </Step>
-  <Step title="Follow the Recon Phase">
-    Begin with the reconnaissance section. Run each enumeration command against your deployed instance and compare your output to what's documented — small differences are normal and worth investigating.
+  <Step title="Work through recon">
+    Run each enumeration command against your instance and compare the output. Differences are normal and usually worth investigating.
   </Step>
-  <Step title="Work Through Exploitation">
-    Move into the exploitation sections once enumeration is complete. Each step explains not just *what* to run, but *why* it works — read the explanations before copying commands.
-  </Step>
-  <Step title="Check the Methodology Reference">
-    If you get stuck or want to approach a step differently, consult the [Methodology](/reference/methodology) page for a higher-level view of the attack chain and alternative techniques.
+  <Step title="Move into exploitation">
+    Each step explains why a technique works, not only what to run — read before copying.
   </Step>
 </Steps>
 
-<Tip>
-  The best way to follow along is to have an active TryHackMe subscription and your own deployed instance of the room. Free accounts can still access many rooms — sign up at [tryhackme.com](https://tryhackme.com) and deploy the target before you start reading.
-</Tip>
+<Note>
+  Everything here is built in isolated lab environments. Configurations are chosen to make concepts observable, not as production hardening guidance.
+</Note>
