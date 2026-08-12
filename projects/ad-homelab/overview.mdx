@@ -1,0 +1,82 @@
+---
+title: "Active Directory Homelab — Corporate Network Simulation"
+sidebarTitle: "Overview"
+description: "Building a Windows Server 2022 domain controller and Windows 11 client in VMware Workstation Pro, with AD DS, RAS/NAT, DHCP, and bulk user provisioning."
+icon: "sitemap"
+---
+
+This lab builds a working Active Directory environment from scratch: a Windows Server 2022 domain controller, a Windows 11 client joined to the domain, and an isolated internal network that still reaches the internet through the DC. The goal is a corporate network simulation — a realistic base to layer security practices onto later, rather than a one-off exercise in clicking through a role installation wizard.
+
+The part worth paying attention to is the networking. The client sits on a private, isolated network with no direct route out. Everything it does — DHCP lease, DNS resolution, internet access — depends on the domain controller being configured correctly as gateway, DHCP server, and NAT router. Get one of those wrong and the client silently fails in a way that looks like an AD problem but isn't.
+
+<CardGroup cols={2}>
+  <Card title="Hypervisor" icon="server">
+    VMware Workstation Pro 17
+  </Card>
+
+  <Card title="Domain Controller" icon="windows">
+    Windows Server 2022
+  </Card>
+
+  <Card title="Client" icon="desktop">
+    Windows 11
+  </Card>
+
+  <Card title="Provisioning" icon="terminal">
+    PowerShell
+  </Card>
+</CardGroup>
+
+## What Gets Built
+
+```text
+DC (Server 2022) ─┬─ NAT adapter ────────→ Internet
+                  └─ Internal adapter ───→ Isolated LAN ──→ Windows 11 client
+
+Roles on the DC: AD DS · DNS · DHCP · RAS with NAT
+```
+
+The domain controller runs four things that matter: Active Directory Domain Services for the domain itself, DNS as a dependency of AD DS, DHCP so the client can lease an address without manual configuration, and Remote Access Server with NAT so traffic from the isolated network can reach the internet through the DC's second adapter.
+
+## Build Phases
+
+<Steps>
+  <Step title="Architecture">
+    The dual-adapter design on the domain controller, why the client is isolated, and how traffic actually flows out of the private network.
+
+    → [Network Architecture](/projects/ad-homelab/architecture)
+  </Step>
+  <Step title="Build">
+    Provisioning the server VM, configuring the internal adapter with a static address and DNS, installing AD DS, and promoting the machine to a domain controller.
+
+    → [Building the Domain Controller](/projects/ad-homelab/build)
+  </Step>
+  <Step title="Configuration">
+    Creating the domain admin account, standing up RAS with NAT, configuring DHCP scope options, and bulk-provisioning over a thousand users with PowerShell.
+
+    → [Roles & User Provisioning](/projects/ad-homelab/configuration)
+  </Step>
+  <Step title="Validation">
+    Joining the Windows 11 client to the domain and confirming the whole chain works — lease issued, gateway reachable, domain login successful.
+
+    → [Joining & Verifying the Client](/projects/ad-homelab/validation)
+  </Step>
+</Steps>
+
+## Skills Exercised
+
+- Active Directory Domain Services installation and domain creation
+- Windows Server role management (DNS, DHCP, Remote Access)
+- NAT configuration and routing between isolated and external networks
+- DHCP scope and scope option configuration
+- PowerShell scripting and execution policy handling
+- Bulk user account provisioning at scale
+- Domain join and client-side network troubleshooting
+
+<Note>
+  Source repository: [by-tayo/ad-homelab](https://github.com/by-tayo/ad-homelab)
+</Note>
+
+<Info>
+  The original build followed along with lab material from Josh Madakor, a creator in the cybersecurity and IT space.
+</Info>

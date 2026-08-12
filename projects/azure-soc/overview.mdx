@@ -1,0 +1,102 @@
+---
+title: "Azure SOC Lab — SIEM Simulation with a Live Honeypot"
+sidebarTitle: "Overview"
+description: "Building a SIEM simulation in Microsoft Azure using Sentinel, Log Analytics, and a deliberately exposed Windows 10 honeypot to observe live attack traffic."
+icon: "cloud"
+---
+
+This lab builds a working SIEM in Microsoft Azure and points it at a honeypot. A Windows 10 virtual machine is deliberately left exposed — every port open, host firewall off — and its security events are forwarded into a Log Analytics workspace where Microsoft Sentinel can query them.
+
+The result is not simulated data. Within hours of the VM going live, real authentication attempts from real hosts on the internet start landing in the logs, and those events can be mapped by source geography into a live attack map.
+
+<CardGroup cols={2}>
+  <Card title="Cloud Platform" icon="cloud">
+    Microsoft Azure
+  </Card>
+
+  <Card title="SIEM" icon="shield-halved">
+    Microsoft Sentinel
+  </Card>
+
+  <Card title="Honeypot" icon="windows">
+    Windows 10 VM
+  </Card>
+
+  <Card title="Query Language" icon="magnifying-glass">
+    KQL
+  </Card>
+</CardGroup>
+
+## Azure Resources
+
+The lab is built from a single resource group containing everything it needs:
+
+| Resource | Purpose |
+| --- | --- |
+| Resource group | Container for every service in the lab |
+| Windows 10 VM | The honeypot — the thing being attacked |
+| Virtual network | Network the VM sits on, with its associated security group |
+| Log Analytics workspace | Where forwarded security events are stored and queried |
+| Microsoft Sentinel | SIEM layer over the workspace — connectors, queries, and visualisation |
+
+## Data Flow
+
+```text
+Internet attackers
+      │
+      ▼  (all ports open, host firewall off)
+Windows 10 VM ──── Security Events ────▶ Data Collection Rule
+                                              │
+                                              ▼
+                                    Log Analytics Workspace
+                                              │
+                                              ▼
+                          Microsoft Sentinel — KQL · GeoIP · Attack Map
+```
+
+## Build Phases
+
+<Steps>
+  <Step title="Architecture">
+    The resource layout, how log data travels from the VM to Sentinel, and why the honeypot is exposed the way it is.
+
+    → [Architecture](/projects/azure-soc/architecture)
+  </Step>
+  <Step title="Build">
+    Standing up the resource group, virtual network, and Windows 10 VM, then opening the network security group and disabling the host firewall.
+
+    → [Deploying the Honeypot](/projects/azure-soc/build)
+  </Step>
+  <Step title="Configuration">
+    Creating the Sentinel workspace, installing data connectors, and building the data collection rule that forwards security events.
+
+    → [Sentinel & Log Ingestion](/projects/azure-soc/configuration)
+  </Step>
+  <Step title="Validation">
+    Querying events with KQL, enriching them with GeoIP data, and watching the attack map populate over 24 and 48 hours.
+
+    → [KQL, GeoIP & the Attack Map](/projects/azure-soc/validation)
+  </Step>
+</Steps>
+
+## Skills Exercised
+
+- Azure resource deployment and resource group organisation
+- Network security group rule configuration
+- Microsoft Sentinel workspace setup and data connector installation
+- Data collection rules and log forwarding to Log Analytics
+- KQL query construction with filtering and time-range scoping
+- Log enrichment with GeoIP data and geographic visualisation
+- Interpreting real-world attack traffic patterns
+
+<Warning>
+  This lab intentionally exposes a virtual machine with no network or host firewall protection. Build it in an isolated subscription with no connectivity to anything you care about, treat the VM as compromised for its entire lifetime, and delete the resource group when you are finished — both to close the exposure and to stop the meter running.
+</Warning>
+
+<Note>
+  Source repository: [by-tayo/azure-soclab](https://github.com/by-tayo/azure-soclab)
+</Note>
+
+<Info>
+  The original build followed along with lab material from Josh Madakor, a creator in the cybersecurity and IT space.
+</Info>

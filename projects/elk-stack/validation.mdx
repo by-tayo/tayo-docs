@@ -1,0 +1,68 @@
+---
+title: "Verification & Hardening — Testing the Pipeline and Securing It"
+sidebarTitle: "Validation"
+description: "Verifying each hop of the logging pipeline independently, the security gaps in the default configuration, and planned improvements to the stack."
+icon: "circle-check"
+---
+
+A pipeline with six hops fails in six places, and a document missing from Kibana tells you nothing about which one broke. The fix is to verify each stage independently rather than only checking the end.
+
+## Verifying Kafka
+
+The most useful checkpoint sits in the middle. Exec into the Kafka container and read the `app-logs` topic directly with `kafka-console-consumer`.
+
+What should appear is a continuous stream of JSON messages matching the app's log patterns, with advancing offsets. That single check splits the pipeline cleanly in half:
+
+| Kafka shows messages? | Where the fault is |
+| --- | --- |
+| Yes | Downstream — Logstash, Elasticsearch, or the Kibana data view |
+| No | Upstream — the app, the log file, or Filebeat |
+
+## Verifying Elasticsearch
+
+With messages confirmed in Kafka, check that documents are landing in Elasticsearch with correctly parsed fields and timestamps. Documents present but with fields unparsed points at the Logstash filter rather than at transport.
+
+Because indices are backed by the named `esdata` volume, this data persists across restarts — so a restart that appears to lose everything indicates a volume problem, not an ingestion one.
+
+## Verifying Kibana and Nagios
+
+In Kibana, the `logs-*` data view should return events in Discover, and the `demo-app-errors` saved search should isolate `level: "ERROR"` records.
+
+In Nagios, Elasticsearch and Kibana should both report healthy, with state and trend history accumulating over time.
+
+## Security Posture
+
+The stack runs with `xpack.security.enabled=false` and no TLS. This keeps local setup friction-free and is **not** suitable for anything beyond localhost.
+
+Hardening it for shared or production use means four changes:
+
+<Steps>
+  <Step title="Enable X-Pack security and TLS">
+    Set `xpack.security.enabled=true` on Elasticsearch and Kibana, and generate certificates with `elasticsearch-certutil` or mount your own.
+  </Step>
+  <Step title="Set credentials properly">
+    Set passwords for the built-in users via `elasticsearch-setup-passwords`, and configure Kibana with a service account or API key rather than a superuser.
+  </Step>
+  <Step title="Secure Kafka in transit">
+    Put TLS in front of Kafka using `SASL_SSL` listeners if Filebeat or Logstash cross an untrusted network.
+  </Step>
+  <Step title="Lock down Nagios">
+    Replace the default `nagiosadmin` / `nagios` credentials immediately, and put Nagios behind a reverse proxy with its own TLS termination.
+  </Step>
+</Steps>
+
+<Warning>
+  The defaults here are a deliberate trade for local convenience, not an oversight. The distinction matters: this configuration is safe on a laptop and unsafe the moment any of these ports is reachable from another host.
+</Warning>
+
+## Future Improvements
+
+- Add Kibana dashboards — bar charts by log level, pie charts by service — as exportable saved objects
+- Wire the Watcher alert, or Kibana's own alerting rules, to a real notification channel
+- Deploy to Kubernetes, Docker Swarm, or Elastic Cloud for higher availability and scale
+- Integrate Nagios notifications for critical outages and correlate them with Kibana error spikes
+- Add log rotation for `logs/app.log` so long-running local demos don't grow the file unbounded
+
+<Note>
+  Source repository: [by-tayo/elk\_stack](https://github.com/by-tayo/elk_stack)
+</Note>

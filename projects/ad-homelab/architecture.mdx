@@ -1,0 +1,69 @@
+---
+title: "AD Homelab Network Architecture — Dual-NIC Isolated Design"
+sidebarTitle: "Architecture"
+description: "How the domain controller uses two network adapters to bridge an isolated internal network to the internet, acting as gateway, DNS server, and NAT router."
+icon: "diagram-project"
+---
+
+The networking design is what makes this lab behave like a corporate environment rather than two VMs on a shared network. The client has no independent route to the internet. Every packet it sends outbound passes through the domain controller, which means the DC has to play several roles at once.
+
+## The Two-Adapter Design
+
+The domain controller is configured with two network adapters:
+
+<CardGroup cols={2}>
+  <Card title="NAT Adapter" icon="globe">
+    Attached to VMware's NAT network. This is the DC's path to the internet — patching, updates, and any outbound traffic it forwards on behalf of the client.
+  </Card>
+
+  <Card title="Internal Adapter" icon="network-wired">
+    Attached to an isolated internal network. This is the domain-facing side, carrying all traffic between the DC and the Windows 11 client.
+  </Card>
+</CardGroup>
+
+The internal adapter is configured manually with a static IP address, subnet mask, and DNS setting. Static addressing matters here: the DC is going to be the DNS server for the domain, and a domain controller whose own address moves is a domain controller that breaks its clients.
+
+## Traffic Flow
+
+```text
+┌──────────────────┐
+│  Windows 11 Client │
+│  (no default GW    │
+│   of its own)      │
+└────────┬─────────┘
+         │  isolated internal network
+         ▼
+┌────────────────────────────────────┐
+│  Domain Controller (Server 2022)      │
+│  • Internal NIC — static IP, gateway  │
+│  • AD DS + DNS                        │
+│  • DHCP — leases to the client        │
+│  • RAS with NAT — translates outbound │
+│  • NAT NIC — uplink                   │
+└────────┬────────────────────────────┘
+         ▼
+     Internet
+```
+
+## Why the DC Wears Four Hats
+
+Each role on the domain controller exists to solve a specific problem created by isolating the client.
+
+| Role | Problem it solves |
+| --- | --- |
+| AD DS | Provides the domain the client authenticates against |
+| DNS | Resolves domain records; installed as an AD DS dependency |
+| DHCP | Gives the isolated client an address without manual configuration |
+| RAS with NAT | Translates the client's private traffic so it can reach the internet |
+
+Without NAT, the client leases an address and joins the domain but has no internet. Without DHCP, the client needs manual addressing and the lab stops resembling a real network. Without the DC as default gateway, outbound traffic has nowhere to go.
+
+## The Default Gateway Problem
+
+There is one wrinkle that catches people out. A client leasing an address from DHCP does not automatically know where to send traffic destined for anything outside its own subnet — it needs a default gateway, and that has to be handed to it explicitly.
+
+In this build the gateway is supplied through DHCP scope options rather than configured on the client, along with a loopback address. That configuration is covered on the [Configuration](/projects/ad-homelab/configuration) page.
+
+<Tip>
+  If the client can ping the domain controller but nothing beyond it, the problem is almost always the gateway or NAT — not Active Directory. Check the scope options before you start troubleshooting the domain.
+</Tip>

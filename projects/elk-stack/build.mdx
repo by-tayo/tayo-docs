@@ -1,0 +1,64 @@
+---
+title: "Running the Stack — Docker Compose Setup & First Steps"
+sidebarTitle: "Build"
+description: "Cloning the repository, bringing all seven services up with Docker Compose, reaching each endpoint, and creating the Kibana data view to start exploring logs."
+icon: "screwdriver-wrench"
+---
+
+The entire stack starts with one command. Everything — the demo app, Filebeat, Kafka, Logstash, Elasticsearch, Kibana, and Nagios — is defined in `docker-compose.yml` and comes up together on a shared local network.
+
+## Bringing It Up
+
+```bash
+git clone https://github.com/by-tayo/elk_stack.git
+cd elk_stack
+docker compose up -d
+```
+
+Give the services time to report healthy before expecting anything to work. Elasticsearch in particular takes a while to become ready, and Logstash and Kibana are configured to wait on it — so an immediate check will show services that appear stalled but are simply queued behind their dependencies.
+
+## Service Endpoints
+
+Once the stack is healthy, each service is reachable on localhost:
+
+| Service | URL |
+| --- | --- |
+| Kibana | `http://localhost:5601` |
+| Elasticsearch | `http://localhost:9200` |
+| Nagios | `http://localhost:8080` |
+
+Nagios uses the default credentials `nagiosadmin` / `nagios`.
+
+<Warning>
+  Change the Nagios credentials on first login. They are published defaults, and leaving them in place is the single most exposed thing in an otherwise localhost-only stack.
+</Warning>
+
+## Creating the Kibana Data View
+
+Elasticsearch will have data before Kibana can show it to you — Kibana needs to be told which indices to read.
+
+In Kibana, create a data view for `logs-*` and set `@timestamp` as the time field. This is the step that connects the UI to the date-based indices Logstash is writing, and without it Discover has nothing to display.
+
+<Tip>
+  If the data view creation screen reports no matching indices, the pipeline has not delivered anything yet. Check Elasticsearch directly at `:9200` for `logs-*` indices before assuming Kibana is misconfigured — the fault is almost always further upstream.
+</Tip>
+
+## Exploring the Data
+
+With the data view in place, Discover shows the incoming log events with their parsed fields — `level`, `msg`, `user_id`, and `latency_ms` alongside the ECS metadata Filebeat attached.
+
+## Tearing Down
+
+```bash
+docker compose down -v
+```
+
+The `-v` flag removes the named volumes, including `esdata` — which drops the persisted Elasticsearch data. Omit it to stop the stack while keeping indexed logs for the next run.
+
+<Info>
+  Elasticsearch data survives ordinary restarts because it is backed by the named `esdata` volume rather than the container filesystem. Only `down -v` discards it.
+</Info>
+
+## Next
+
+With the stack running, [Pipeline, Dashboards & Alerting](/projects/elk-stack/configuration) covers what the components are actually configured to do.

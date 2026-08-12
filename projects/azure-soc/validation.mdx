@@ -1,0 +1,60 @@
+---
+title: "KQL, GeoIP & the Live Attack Map — Analysing Honeypot Traffic"
+sidebarTitle: "Validation"
+description: "Querying security events with KQL, enriching them with GeoIP data, and building a live attack map that populates over 24 and 48 hours of real traffic."
+icon: "circle-check"
+---
+
+With events flowing into the workspace, the lab shifts from building infrastructure to analysing what the honeypot caught. This is the part that makes the exercise worth doing — the data is real, unsolicited, and arrives continuously.
+
+## Querying with KQL
+
+The Log Analytics workspace is queried using KQL, filtering security events down to something readable. In practice that means narrowing on two axes:
+
+- **Event type** — isolating the events that indicate attempted access rather than routine system activity
+- **Time period** — scoping to a window, since an exposed host accumulates events faster than they can be read raw
+
+Without filtering, the volume is the problem rather than the finding. A honeypot with no firewall produces a continuous stream, and the analytical work is deciding which slice of it answers a question.
+
+<Tip>
+  Start with a narrow time window and widen it. A query scoped to the last hour returns fast and tells you whether your filter is even correct; the same query across a week just makes you wait to discover it wasn't.
+</Tip>
+
+## Enriching with GeoIP Data
+
+Security events record the source address of each attempt but nothing about where that address is. GeoIP data supplies the missing dimension — mapping source addresses to geographic locations so events can be plotted rather than only listed.
+
+This enrichment is what turns a table of failed logons into something you can look at and immediately understand.
+
+## The Live Attack Map
+
+Using the enriched data, a live attack map visualises incoming traffic by source location.
+
+The lab observed this in two passes:
+
+| Window | Purpose |
+| --- | --- |
+| 24 hours | First view of the map — confirms enrichment works and traffic is arriving |
+| 48 hours | Extended observation — more traffic accumulates and the picture fills in |
+
+Waiting for the second window is the point. At 24 hours the map shows that the pipeline works; by 48 hours it shows a pattern, with volume concentrating in particular regions rather than appearing evenly distributed.
+
+## What the Lab Demonstrates
+
+The finished environment exercises the full path a SOC analyst works along:
+
+- **Collection** — agents and data collection rules moving events off an endpoint
+- **Centralisation** — a workspace aggregating those events into a queryable store
+- **Querying** — KQL to filter volume down to signal
+- **Enrichment** — adding context that the raw event does not carry
+- **Visualisation** — presenting the result so patterns are visible at a glance
+
+The more durable lesson is about baseline expectations. An exposed Windows host attracts sustained, automated attack traffic within hours, from a wide spread of sources, with no provocation beyond existing at a routable address.
+
+<Warning>
+  When the observation window is finished, delete the resource group. This closes the exposure and stops ingestion charges in one action — an exposed VM left running is a liability, not a dormant lab.
+</Warning>
+
+<Note>
+  Source repository: [by-tayo/azure-soclab](https://github.com/by-tayo/azure-soclab)
+</Note>

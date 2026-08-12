@@ -1,0 +1,54 @@
+---
+title: "Joining & Verifying the Client — Domain Join Validation"
+sidebarTitle: "Validation"
+description: "Placing the Windows 11 client on the isolated network, joining it to the domain, and verifying the lease, gateway, and domain login all work end to end."
+icon: "circle-check"
+---
+
+Everything built so far is theory until a client uses it. This phase puts the Windows 11 machine on the isolated network, joins it to the domain, and confirms each link in the chain — addressing, routing, and authentication — actually holds.
+
+## Placing the Client on the Internal Network
+
+For the Windows 11 VM to sit inside the private internal network, its adapter is switched over in the VM's network settings to act as an internal NIC rather than using NAT directly. Once it is on that network, it has no independent path out: it depends entirely on the domain controller.
+
+The client is then left to obtain its address automatically. If the DHCP scope is configured correctly, it leases an address from the domain controller — which is also its route to the internet, by way of the NAT configuration on the DC.
+
+## Confirming the Lease
+
+The cleanest place to verify addressing is from the server side rather than the client. On the domain controller, open the DHCP console and check **Address Leases** for the scope.
+
+The client appears there with the address it was issued. Verifying from the DC confirms two things at once: that the client reached the DHCP server, and that the server considers the lease valid.
+
+<Tip>
+  If no lease appears, the problem is upstream of Active Directory — the client is not reaching the DHCP server at all. Check that both VMs are attached to the same internal network in VMware before touching anything inside Windows.
+</Tip>
+
+## Joining the Domain
+
+With addressing working, the client is configured as a member of the domain. This is the point where DNS matters: the client locates the domain controller through the DNS records AD DS published during promotion, which is why the DC had to be the client's DNS server.
+
+## Verifying Domain Login
+
+The final check is logging into the client using a domain account rather than a local one — authenticating against the domain, not the machine.
+
+A successful domain login means the entire chain worked:
+
+| Component | What a successful login proves |
+| --- | --- |
+| DHCP | The client leased a valid address on the internal network |
+| Scope options | The client has a default gateway and can route off-subnet |
+| RAS with NAT | Traffic from the isolated network reaches the internet |
+| DNS | The client resolved and located the domain controller |
+| AD DS | The domain accepted the credentials and authenticated the account |
+
+If any one of those were misconfigured, the login would fail — which makes it a useful single test rather than five separate ones.
+
+## Outcome
+
+The lab now stands as a functioning Active Directory environment: a domain controller handling directory, DNS, addressing, and routing; a domain-joined Windows 11 client on an isolated network with working internet access; and a directory populated with over a thousand user accounts.
+
+That population is the point. A domain with two accounts cannot demonstrate much, but one with a realistic user base is a foundation for the next stage — building out a corporate network simulation and implementing security strategies against it.
+
+<Note>
+  Source repository: [by-tayo/ad-homelab](https://github.com/by-tayo/ad-homelab)
+</Note>

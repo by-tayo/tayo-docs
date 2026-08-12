@@ -1,0 +1,65 @@
+---
+title: "Pipeline, Dashboards & Alerting — Parsing, Kibana & Watcher"
+sidebarTitle: "Configuration"
+description: "Field extraction in Logstash, ECS enrichment, Kibana saved searches and dashboards, Nagios service checks, and Watcher-based error-rate alerting."
+icon: "sliders"
+---
+
+This is where the stack stops being plumbing and starts producing something useful: structured fields, focused views, and an alert that fires on a condition worth knowing about.
+
+## Structured Log Processing
+
+Logs arrive with two layers of structure. Filebeat attaches ECS-compatible metadata, and Logstash extracts application-specific fields from the message body.
+
+<CardGroup cols={2}>
+  <Card title="ECS metadata (Filebeat)" icon="tags">
+    `@timestamp`, `service`, `environment`, `host.name`, `agent.*`
+  </Card>
+
+  <Card title="Extracted fields (Logstash)" icon="filter">
+    `level` (INFO / WARNING / ERROR), `msg`, `user_id`, `latency_ms`
+  </Card>
+</CardGroup>
+
+The extracted fields are what make the data queryable rather than merely searchable. `level: "ERROR"` as a field filter is precise; the same thing as a text search across raw messages is a guess that happens to usually work.
+
+Logstash also normalizes timestamps and writes documents into date-based `logs-YYYY.MM.DD` indices, persisted across restarts via the `esdata` volume.
+
+## Kibana Views
+
+Kibana is used primarily through Discover and saved objects rather than heavy custom visualization:
+
+| Object | Definition |
+| --- | --- |
+| Data view | `logs-*` with `@timestamp` as the time field |
+| Saved search | `demo-app-errors` — filters on `level: "ERROR"` |
+| Dashboard | `centralized-logging-dashboard` — embeds the saved search for quick error monitoring |
+
+The saved search is the piece doing the work. Embedding it in a dashboard means the error view is one click away rather than a filter that has to be rebuilt each session.
+
+## Nagios Service Checks
+
+Nagios monitors the infrastructure behind the pipeline. Custom host and service definitions in `nagios/conf.d/elk-services.cfg` run `check_http` against Elasticsearch on `:9200` and Kibana on `:5601`.
+
+Nagios polls these independently of Docker and surfaces state and trend history in its own UI — so a container that has stopped responding shows up as a monitored failure rather than as unexplained silence in Kibana.
+
+## Alerting with Watcher
+
+An example Elasticsearch Watcher lives at `elasticsearch/watcher/high-error-rate-watch.json`. It runs every minute, counts `ERROR` events in `logs-*` over the last five minutes, and alerts when the count reaches ten or more.
+
+Load it through the Kibana Dev Tools console once the stack is up:
+
+```text
+PUT _watcher/watch/high-error-rate
+<paste the contents of high-error-rate-watch.json as the request body>
+```
+
+<Info>
+  The default action writes to the Elasticsearch Watcher log — useful for confirming the watch triggers, useless for actually being told about it. Swapping the `logging` action for an `email` or `webhook` action turns it into a real notification path.
+</Info>
+
+The rate-based condition is the design point worth noting. Alerting on any single `ERROR` produces noise that gets ignored within a day; alerting on ten in five minutes fires on a change in behaviour rather than on the existence of errors at all.
+
+## Next
+
+[Verification & Hardening](/projects/elk-stack/validation) covers proving each hop works, and what the default configuration deliberately leaves insecure.

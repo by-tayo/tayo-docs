@@ -1,0 +1,84 @@
+---
+title: "Centralized Logging & Monitoring — ELK, Kafka & Nagios Stack"
+sidebarTitle: "Overview"
+description: "A fully containerized logging pipeline: Filebeat to Kafka to Logstash to Elasticsearch to Kibana, with Nagios Core monitoring the infrastructure behind it."
+icon: "chart-line"
+---
+
+This project builds a centralized logging and monitoring stack for a demo application, running entirely in Docker on localhost. Logs are shipped with Filebeat, transported through Kafka, processed by Logstash, indexed into Elasticsearch, and explored in Kibana — with Nagios Core watching the infrastructure underneath.
+
+The design choice worth noting is Kafka. A simpler stack would have Filebeat write straight to Logstash, and for a demo application that would work. Putting an event bus in the middle decouples the shippers from the processors, so producers keep running when Logstash restarts and the pipeline can scale horizontally on either side — which is why real deployments look like this.
+
+<CardGroup cols={2}>
+  <Card title="Orchestration" icon="docker">
+    Docker & Docker Compose
+  </Card>
+
+  <Card title="Transport" icon="right-left">
+    Filebeat 8.11 · Kafka (KRaft)
+  </Card>
+
+  <Card title="Processing & Storage" icon="database">
+    Logstash 8.11 · Elasticsearch 8.11
+  </Card>
+
+  <Card title="Analysis & Monitoring" icon="chart-line">
+    Kibana 8.11 · Nagios Core 4.x
+  </Card>
+</CardGroup>
+
+## Objectives
+
+- Collect application logs from a Dockerized app in a consistent, structured format
+- Use Kafka as a reliable transport layer between log shippers and log processors
+- Parse, enrich, and index logs into Elasticsearch for fast querying
+- Build Kibana searches and visualizations to analyze `INFO`, `WARNING`, and `ERROR` events
+- Use Nagios to monitor service availability across the same environment
+
+## Pipeline
+
+```text
+app/app.py → logs/app.log → Filebeat → Kafka (app-logs) → Logstash → Elasticsearch → Kibana
+                                                                            ▲
+                                                              Nagios (HTTP health checks)
+```
+
+## Documentation
+
+<Steps>
+  <Step title="Architecture">
+    Each component's role, the files that configure them, and how events move through the pipeline.
+
+    → [Architecture](/projects/elk-stack/architecture)
+  </Step>
+  <Step title="Build">
+    Bringing the stack up with Docker Compose, reaching the service endpoints, and creating the Kibana data view.
+
+    → [Running the Stack](/projects/elk-stack/build)
+  </Step>
+  <Step title="Configuration">
+    Log parsing and field extraction, saved searches, the dashboard, Nagios service checks, and Watcher-based alerting.
+
+    → [Pipeline, Dashboards & Alerting](/projects/elk-stack/configuration)
+  </Step>
+  <Step title="Validation">
+    Verifying each hop independently, plus the security gaps in the default configuration and where the project goes next.
+
+    → [Verification & Hardening](/projects/elk-stack/validation)
+  </Step>
+</Steps>
+
+## Skills Exercised
+
+- Multi-service container orchestration with Docker Compose
+- Log shipping and ECS-compatible field mapping with Filebeat
+- Kafka as a decoupling layer, running in KRaft mode without Zookeeper
+- Logstash filter development for parsing and timestamp normalization
+- Elasticsearch index design and persistent volume management
+- Kibana data views, saved searches, and dashboards
+- Nagios host and service definitions for HTTP health checking
+- Alerting design with Elasticsearch Watcher
+
+<Note>
+  Source repository: [by-tayo/elk\_stack](https://github.com/by-tayo/elk_stack)
+</Note>
