@@ -3,9 +3,9 @@
   "theme": "luma",
   "name": "tayo-docs",
   "colors": {
-    "primary": "#3B82F6",
-    "light": "#93C5FD",
-    "dark": "#1E3A5F"
+    "primary": "#2563EB",
+    "light": "#60A5FA",
+    "dark": "#1E3A8A"
   },
   "favicon": "https://media.brand.dev/483ee27f-08fb-4d32-842d-86b4c40f9fb4.png",
   "logo": {
@@ -21,7 +21,8 @@
             "group": "Welcome",
             "pages": ["introduction", "about"]
           }
-        ]
+        ],
+        "icon": "house"
       },
       {
         "tab": "TryHackMe",
@@ -36,7 +37,8 @@
               "tryhackme/byte-lotus/flags"
             ]
           }
-        ]
+        ],
+        "icon": "flag"
       },
       {
         "tab": "Projects",
@@ -103,7 +105,8 @@
               "projects/packet-tracer/validation"
             ]
           }
-        ]
+        ],
+        "icon": "layer-group"
       },
       {
         "tab": "Reference",
@@ -116,7 +119,8 @@
               "reference/terminology"
             ]
           }
-        ]
+        ],
+        "icon": "book"
       }
     ]
   },
@@ -130,5 +134,6 @@
     "socials": {
       "github": "https://github.com/by-tayo"
     }
-  }
+  },
+  "description": "Security engineering lab builds and CTF writeups by TAYO — Active Directory, Azure SOC, ELK, GCP, and network labs, plus walkthroughs of CTF rooms."
 }
