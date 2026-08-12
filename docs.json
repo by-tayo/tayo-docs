@@ -41,6 +41,18 @@
         "icon": "flag"
       },
       {
+        "tab": "HackTheBox",
+        "groups": [
+          {
+            "group": "Overview",
+            "icon": "cube",
+            "pages": [
+              "hackthebox/introduction"
+            ]
+          }
+        ]
+      },
+      {
         "tab": "Projects",
         "groups": [
           {
