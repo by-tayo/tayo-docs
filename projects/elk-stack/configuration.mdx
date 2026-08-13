@@ -7,58 +7,181 @@ icon: "sliders"
 
 This is where the stack stops being plumbing and starts producing something useful: structured fields, focused views, and an alert that fires on a condition worth knowing about.
 
-## Structured Log Processing
+## The Logstash Pipeline
 
-Logs arrive with two layers of structure. Filebeat attaches ECS-compatible metadata, and Logstash extracts application-specific fields from the message body.
+The whole pipeline is one file — `logstash/pipeline/logstash.conf`:
 
-<CardGroup cols={2}>
-  <Card title="ECS metadata (Filebeat)" icon="tags">
-    `@timestamp`, `service`, `environment`, `host.name`, `agent.*`
-  </Card>
+```ruby
+input {
+  kafka {
+    bootstrap_servers => "kafka:9092"
+    topics => ["app-logs"]
+    codec => json
+  }
+}
 
-  <Card title="Extracted fields (Logstash)" icon="filter">
-    `level` (INFO / WARNING / ERROR), `msg`, `user_id`, `latency_ms`
-  </Card>
-</CardGroup>
+filter {
+  grok {
+    match => {
+      "message" => "%{LOGLEVEL:level} %{TIMESTAMP_ISO8601:timestamp} %{GREEDYDATA:msg}"
+    }
+  }
 
-The extracted fields are what make the data queryable rather than merely searchable. `level: "ERROR"` as a field filter is precise; the same thing as a text search across raw messages is a guess that happens to usually work.
+  date {
+    match => ["timestamp", "ISO8601"]
+    target => "@timestamp"
+  }
 
-Logstash also normalizes timestamps and writes documents into date-based `logs-YYYY.MM.DD` indices, persisted across restarts via the `esdata` volume.
+  grok {
+    match => { "msg" => "user_id=%{NUMBER:user_id:int}" }
+    tag_on_failure => ["_no_user_id"]
+  }
+
+  grok {
+    match => { "msg" => "latency_ms=%{NUMBER:latency_ms:int}" }
+    tag_on_failure => ["_no_latency"]
+  }
+
+  mutate {
+    remove_field => ["timestamp"]
+    remove_tag => ["_no_user_id", "_no_latency"]
+  }
+}
+
+output {
+  elasticsearch {
+    hosts => ["http://elasticsearch:9200"]
+    index => "logs-%{+YYYY.MM.dd}"
+  }
+  stdout { codec => rubydebug }
+}
+```
+
+### Handling Optional Fields
+
+The three groks do different jobs. The first is mandatory — every line matches `LOGLEVEL TIMESTAMP message`, and a failure here means the log format changed.
+
+The second and third are optional. Not every message carries `user_id` or `latency_ms`: the `WARNING` line has latency but no user, and a non-matching grok would otherwise mark the event with a `_grokparsefailure` tag that makes healthy events look broken.
+
+The fix is the `tag_on_failure` / `remove_tag` pair. Each optional grok tags its own specific failure, and `mutate` strips those tags afterwards — so a missing field is silently absent rather than flagged as a parse error. It is a small detail that keeps Kibana clean.
+
+### Timestamp Normalization
+
+The `date` filter parses the application's own timestamp into `@timestamp`, then `mutate` removes the now-redundant `timestamp` field. This matters because Kibana orders by `@timestamp`: without this, events would be ordered by when Logstash processed them rather than when the application logged them, and any ingestion lag would silently reorder your timeline.
+
+### Resulting Fields
+
+| Field | Source |
+| --- | --- |
+| `level` | Grok — `INFO`, `WARNING`, or `ERROR` |
+| `msg` | Grok — the message body |
+| `user_id` | Grok, optional — integer |
+| `latency_ms` | Grok, optional — integer |
+| `@timestamp` | Date filter, from the app's own timestamp |
+| `service`, `environment` | Filebeat, promoted to root |
+
+Typing `user_id` and `latency_ms` as `:int` rather than leaving them as strings is what makes range queries and latency aggregations work in Kibana.
+
+<Tip>
+  The `stdout { codec => rubydebug }` output prints every parsed event to the Logstash container log. Invaluable while developing the filter — `docker compose logs -f logstash` shows exactly what each event looks like after parsing. Worth removing once the pipeline is stable, since it doubles the log volume.
+</Tip>
 
 ## Kibana Views
-
-Kibana is used primarily through Discover and saved objects rather than heavy custom visualization:
 
 | Object | Definition |
 | --- | --- |
 | Data view | `logs-*` with `@timestamp` as the time field |
 | Saved search | `demo-app-errors` — filters on `level: "ERROR"` |
-| Dashboard | `centralized-logging-dashboard` — embeds the saved search for quick error monitoring |
+| Dashboard | `centralized-logging-dashboard` — embeds the saved search |
 
-The saved search is the piece doing the work. Embedding it in a dashboard means the error view is one click away rather than a filter that has to be rebuilt each session.
+The saved search is the piece doing the work. Embedding it in a dashboard means the error view is one click away rather than a filter rebuilt each session.
 
 ## Nagios Service Checks
 
-Nagios monitors the infrastructure behind the pipeline. Custom host and service definitions in `nagios/conf.d/elk-services.cfg` run `check_http` against Elasticsearch on `:9200` and Kibana on `:5601`.
+The host and service definitions in `nagios/conf.d/elk-services.cfg`:
 
-Nagios polls these independently of Docker and surfaces state and trend history in its own UI — so a container that has stopped responding shows up as a monitored failure rather than as unexplained silence in Kibana.
+```text
+define host {
+  use             linux-server
+  host_name       elasticsearch
+  alias           Elasticsearch
+  address         elasticsearch
+}
+
+define service {
+  use                     local-service
+  host_name               elasticsearch
+  service_description     Elasticsearch HTTP
+  check_command           check_http!-p 9200 -u /
+}
+
+define service {
+  use                     local-service
+  host_name               kibana
+  service_description     Kibana HTTP
+  check_command           check_http!-p 5601 -u /login
+}
+```
+
+The directory is mounted at `/opt/nagios/etc/conf.d`, which the base image's `nagios.cfg` already auto-loads via `cfg_dir` — so dropping a file in is enough, with no edit to the main config. The `linux-server` and `local-service` templates ship with the `jasonrivers/nagios` image.
+
+Kibana is checked at `/login` rather than `/` deliberately: the root path redirects, and checking the login page gives a direct 200 from a Kibana that is genuinely serving.
 
 ## Alerting with Watcher
 
-An example Elasticsearch Watcher lives at `elasticsearch/watcher/high-error-rate-watch.json`. It runs every minute, counts `ERROR` events in `logs-*` over the last five minutes, and alerts when the count reaches ten or more.
+The watch at `elasticsearch/watcher/high-error-rate-watch.json` runs every minute, counts `ERROR` events over the last five minutes, and fires at ten or more:
+
+```json
+{
+  "trigger": { "schedule": { "interval": "1m" } },
+  "input": {
+    "search": {
+      "request": {
+        "indices": ["logs-*"],
+        "body": {
+          "query": {
+            "bool": {
+              "filter": [
+                { "term": { "level": "ERROR" } },
+                { "range": { "@timestamp": { "gte": "now-5m" } } }
+              ]
+            }
+          }
+        }
+      }
+    }
+  },
+  "condition": {
+    "compare": { "ctx.payload.hits.total.value": { "gte": 10 } }
+  },
+  "actions": {
+    "log_high_error_rate": {
+      "logging": {
+        "text": "High error rate detected: {{ctx.payload.hits.total.value}} ERROR events in the last 5 minutes"
+      }
+    }
+  }
+}
+```
 
 Load it through the Kibana Dev Tools console once the stack is up:
 
 ```text
 PUT _watcher/watch/high-error-rate
-<paste the contents of high-error-rate-watch.json as the request body>
+<paste the file contents as the request body>
 ```
 
-<Info>
-  The default action writes to the Elasticsearch Watcher log — useful for confirming the watch triggers, useless for actually being told about it. Swapping the `logging` action for an `email` or `webhook` action turns it into a real notification path.
-</Info>
+<Warning>
+  **The threshold does not suit this demo app.** The app emits one `ERROR` every five seconds — roughly 60 in any five-minute window — so a threshold of 10 is exceeded permanently rather than on a spike. Against this log source the watch is either always firing or, if the field mapping does not match (see below), never firing. Neither is a useful alert.
 
-The rate-based condition is the design point worth noting. Alerting on any single `ERROR` produces noise that gets ignored within a day; alerting on ten in five minutes fires on a change in behaviour rather than on the existence of errors at all.
+  For a demo that behaves like a real alert, either raise the threshold well above the steady-state rate, or make the app's error rate variable so there is an actual spike to detect.
+</Warning>
+
+<Note>
+  **Check the field mapping before trusting the query.** The condition uses a `term` query on `level`. Under Elasticsearch's dynamic mapping, `level` is indexed as analyzed text — meaning the stored token is lowercase `error`, while a `term` query does not analyze its input and looks for `ERROR` exactly. If the watch never fires despite plenty of errors, switch the filter to `level.keyword`, which holds the value unmodified.
+</Note>
+
+The rate-based design is still the right instinct: alerting on any single `ERROR` produces noise that gets ignored within a day, while alerting on a rate fires on a change in behaviour. The threshold just needs to sit above normal for whatever the log source actually does.
 
 ## Next
 

@@ -10,88 +10,127 @@ Seven services run on a local Docker network, each owning one stage of the journ
 ## Data Flow
 
 ```text
-app/app.py
-    │  writes INFO / WARNING / ERROR lines
+app/app.py            python:3.11-slim, writes every 5s
+    │  INFO / WARNING / ERROR lines
     ▼
-logs/app.log          (bind-mounted directory)
+logs/app.log          bind-mounted into both app and filebeat
     │  tailed
     ▼
-Filebeat 8.11         adds ECS metadata
-    │  publishes
+Filebeat 8.11.1       adds service + environment fields
+    │  publishes JSON
     ▼
-Kafka (topic: app-logs, KRaft mode)
+Kafka 7.5.0           topic: app-logs, KRaft mode (no Zookeeper)
     │  consumed
     ▼
-Logstash 8.11         parses fields, normalizes timestamps
+Logstash 8.11.1       grok parsing, timestamp normalization
     │  indexes
     ▼
-Elasticsearch 8.11    indices: logs-YYYY.MM.DD
+Elasticsearch 8.11.1  indices: logs-YYYY.MM.dd
     │  queried
     ▼
-Kibana 8.11           Discover, saved searches, dashboard
+Kibana 8.11.1         Discover, saved searches, dashboard
 
-Nagios Core 4.x  ─── check_http ──→ Elasticsearch :9200, Kibana :5601
+Nagios Core  ─── check_http ──▶ elasticsearch:9200/  ·  kibana:5601/login
 ```
 
 ## Components
 
-| Service | Role |
+| Service | Image | Role |
+| --- | --- | --- |
+| Demo app | `python:3.11-slim` | Generates synthetic log lines carrying `user_id` and `latency_ms` |
+| Filebeat | `elastic/filebeat:8.11.1` | Tails the log file and publishes JSON to Kafka |
+| Kafka | `confluentinc/cp-kafka:7.5.0` | Event bus decoupling producers from consumers |
+| Logstash | `elastic/logstash:8.11.1` | Consumes from Kafka, parses into fields, outputs to Elasticsearch |
+| Elasticsearch | `elastic/elasticsearch:8.11.1` | Stores and indexes documents into date-based indices |
+| Kibana | `elastic/kibana:8.11.1` | Search, dashboards, and visualization |
+| Nagios | `jasonrivers/nagios:latest` | Independently polls Elasticsearch and Kibana for availability |
+
+## The Log Source
+
+The demo app is deliberately simple — a loop that writes one of each severity every five seconds:
+
+```python
+logging.basicConfig(
+    filename="/logs/app.log",
+    level=logging.INFO,
+    format="%(levelname)s %(asctime)s %(message)s"
+)
+
+while True:
+    user_id = random.randint(1, 500)
+    latency_ms = random.randint(20, 400)
+    logging.info("User login successful user_id=%d latency_ms=%d", user_id, latency_ms)
+    logging.warning("CPU usage high latency_ms=%d", random.randint(400, 900))
+    logging.error("Database connection failed user_id=%d", user_id)
+    time.sleep(5)
+```
+
+The log format matters more than the content. `%(levelname)s %(asctime)s %(message)s` puts severity first and timestamp second, which is exactly the shape the Logstash grok pattern expects. Change the format string and the parsing breaks.
+
+Note also that not every line carries both structured fields — the `WARNING` has `latency_ms` but no `user_id`. That asymmetry is what the Logstash filter has to tolerate.
+
+## Shipping to Kafka
+
+Filebeat's configuration is short:
+
+```yaml
+strict.perms: false
+
+filebeat.inputs:
+  - type: log
+    paths:
+      - /logs/app.log
+    fields:
+      service: demo-app
+      environment: dev
+    fields_under_root: true
+
+output.kafka:
+  hosts: ["kafka:9092"]
+  topic: "app-logs"
+  codec.json:
+    pretty: false
+```
+
+Two details worth pulling out. `fields_under_root: true` promotes `service` and `environment` to top-level fields rather than nesting them under a `fields` object — which means you filter on `service: "demo-app"` in Kibana instead of `fields.service`. And `strict.perms: false` disables Filebeat's ownership check on its own config file, which otherwise refuses to start when the file is bind-mounted from the host.
+
+## Container Networking
+
+Every service address in these configs is a container name, not `localhost` — `kafka:9092`, `elasticsearch:9200`. Docker Compose resolves service names on its default network, so containers reach each other by name while the host reaches them through published ports.
+
+This is the single most common source of confusion when adapting the stack: `localhost:9092` works from your terminal and fails from inside Logstash.
+
+## Startup Ordering
+
+Kafka, Elasticsearch, and Kibana each define a healthcheck, and dependent services wait on them:
+
+| Service | Waits for |
 | --- | --- |
-| Demo app (Python) | Generates synthetic log lines carrying `user_id` and `latency_ms` values |
-| Filebeat 8.11 | Lightweight shipper; tails the log file and publishes ECS-compatible JSON to Kafka |
-| Apache Kafka | Event bus decoupling producers from consumers; runs in KRaft mode with no Zookeeper |
-| Logstash 8.11 | Consumes from Kafka, parses messages into fields, outputs to Elasticsearch |
-| Elasticsearch 8.11 | Stores and indexes documents into date-based `logs-*` indices |
-| Kibana 8.11 | Search, dashboards, and visualization over the indexed data |
-| Nagios Core 4.x | Independently polls Elasticsearch and Kibana for availability |
+| Kibana | Elasticsearch healthy |
+| Logstash | Kafka healthy, Elasticsearch healthy |
+| Filebeat | Kafka healthy |
 
-## Configuration Files
+Without this, Logstash starts before Kafka is accepting connections, fails its input, and the pipeline never recovers on its own. The healthchecks turn a race condition into a wait.
 
-Each stage of the pipeline is governed by one file, which makes the repository readable in pipeline order:
-
-<CardGroup cols={2}>
-  <Card title="app/app.py" icon="python">
-    Demo application generating synthetic `INFO`, `WARNING`, and `ERROR` lines to `/logs/app.log` inside the container.
-  </Card>
-
-  <Card title="filebeat/filebeat.yml" icon="file-code">
-    Tails the log file, adds ECS metadata, and publishes events to the Kafka topic `app-logs`.
-  </Card>
-
-  <Card title="logstash/pipeline/logstash.conf" icon="filter">
-    Consumes from Kafka, extracts `level`, `msg`, `user_id`, and `latency_ms`, normalizes timestamps, outputs to Elasticsearch.
-  </Card>
-
-  <Card title="nagios/conf.d/elk-services.cfg" icon="heart-pulse">
-    Host and service definitions that `check_http` the Elasticsearch and Kibana containers.
-  </Card>
-
-  <Card title="elasticsearch/watcher/high-error-rate-watch.json" icon="bell">
-    Watcher definition that flags spikes in `ERROR` events.
-  </Card>
-
-  <Card title="docker-compose.yml" icon="docker">
-    Orchestrates all services on a local network and exposes the service ports.
-  </Card>
-</CardGroup>
-
-The `logs/` directory is bind-mounted — the app writes `app.log` there and Filebeat reads it from the same place. Its contents are gitignored, so a fresh clone starts empty.
-
-## Exposed Ports
-
-| Service | Port |
-| --- | --- |
-| Elasticsearch | `9200` |
-| Kibana | `5601` |
-| Kafka | `9092` |
-| Nagios | `8080` |
+<Info>
+  Nagios uses plain `depends_on` with no health condition — it starts as soon as the containers exist and simply reports the services as down until they come up. That is correct behaviour for a monitoring tool.
+</Info>
 
 ## Two Kinds of Monitoring
 
 The stack watches itself in two independent ways, which is easy to conflate but worth separating.
 
-Docker Compose **healthchecks** gate startup ordering — Logstash and Kibana wait for Elasticsearch and Kafka to report healthy before starting. This solves a boot-time race condition.
+Docker Compose **healthchecks** gate startup ordering — solving a boot-time race condition, then never running again in any meaningful sense.
 
-**Nagios** polls Elasticsearch and Kibana over HTTP continuously and surfaces state and trend history in its own UI. This solves ongoing observability.
+**Nagios** polls Elasticsearch and Kibana over HTTP continuously and surfaces state and trend history in its own UI — solving ongoing observability.
 
 The first prevents a broken startup; the second tells you when a running service has fallen over. A stack with only healthchecks starts cleanly and then fails silently.
+
+## Persistence
+
+Two named volumes survive container restarts:
+
+- `esdata` — Elasticsearch indices, so logs persist across `docker compose restart`
+- `nagios_var` — Nagios state and history, so trend data is not lost on restart
+
+The `logs/` directory is a bind mount rather than a volume: the app writes `app.log` there and Filebeat reads it from the same path. Its contents are gitignored, so a fresh clone starts empty.
