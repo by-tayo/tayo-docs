@@ -13,6 +13,10 @@ For the Windows 11 VM to sit inside the private internal network, its adapter is
 
 The client is then left to obtain its address automatically. If the DHCP scope is configured correctly, it leases an address from the domain controller — which is also its route to the internet, by way of the NAT configuration on the DC.
 
+<Frame caption="The Windows 11 client running on the isolated internal network">
+  ![Windows 11 client virtual machine](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/images/windows_11_client.png)
+</Frame>
+
 ## Confirming the Lease
 
 The cleanest place to verify addressing is from the server side rather than the client. On the domain controller, open the DHCP console and check **Address Leases** for the scope.
@@ -32,6 +36,10 @@ With addressing working, the client is configured as a member of the domain. Thi
 The final check is logging into the client using a domain account rather than a local one — authenticating against the domain, not the machine.
 
 A successful domain login means the entire chain worked:
+
+<Frame caption="Confirming the client is joined to the domain">
+  ![Windows 11 client showing domain membership](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/images/verify_domain.png)
+</Frame>
 
 | Component | What a successful login proves |
 | --- | --- |

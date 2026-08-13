@@ -10,6 +10,10 @@ This phase takes a bare Windows Server 2022 VM and turns it into a functioning d
 <Steps>
   <Step title="Provision the server VM">
     Create the Windows Server 2022 virtual machine in VMware Workstation Pro 17 and complete the initial out-of-box setup. This machine becomes the domain controller and the default gateway for the isolated network, so give it enough resources to comfortably run four roles at once.
+
+    <Frame caption="Windows Server 2022 after initial setup">
+      ![Windows Server 2022 desktop after first boot](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/images/windows_home_page.png)
+    </Frame>
   </Step>
   <Step title="Add the second network adapter">
     Configure two network adapters on the VM. Attach the first to NAT for internet access, and the second to an internal, isolated network that only the lab machines can reach.
@@ -20,16 +24,28 @@ This phase takes a bare Windows Server 2022 VM and turns it into a functioning d
     Inside Windows, open the network connections and configure the internal adapter manually with a static IP address, subnet mask, and DNS setting. The NAT adapter can be left on automatic — VMware's NAT service will supply its address.
 
     Naming the adapters at this point (`Internal` and `NAT`, or similar) saves confusion for the rest of the build, since you will be returning to these settings when configuring DHCP and RAS.
+
+    <Frame caption="Both adapters visible in Network Connections — NAT and internal">
+      ![Windows Network Connections showing two network adapters](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/images/network_connections.png)
+    </Frame>
   </Step>
   <Step title="Install Active Directory Domain Services">
     From Server Manager, add the AD DS role. The installation itself only stages the binaries — it does not create a domain.
 
     DNS is installed alongside AD DS as a dependency. This is expected: Active Directory relies on DNS to publish the service records that clients use to locate domain controllers.
+
+    <Frame caption="Adding the Active Directory Domain Services role in Server Manager">
+      ![Server Manager Add Roles wizard with AD DS selected](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/images/ad_ds.png)
+    </Frame>
   </Step>
   <Step title="Promote the server and create the domain">
     After the role installs, run the promotion wizard to create a new forest and domain. This is the step that actually brings Active Directory into existence, and the server reboots at the end of it.
 
     Once it comes back up, check the Local Server properties in Server Manager — the domain now appears in place of the previous workgroup, which is the quickest confirmation that promotion succeeded.
+
+    <Frame caption="Local Server properties showing the domain in place of a workgroup">
+      ![Server Manager Local Server view showing the configured domain](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/images/local_server_domain.png)
+    </Frame>
   </Step>
 </Steps>
 

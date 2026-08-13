@@ -13,11 +13,23 @@ From Windows Administrative Tools, open **Active Directory Users and Computers**
 
 This is worth doing rather than living in the built-in administrator account. Working as a purpose-created domain admin is closer to how real environments separate accounts, and it means the built-in account stays available as a fallback if something gets misconfigured.
 
+<Frame caption="Creating the domain administrator account in Active Directory Users and Computers">
+  ![Active Directory Users and Computers showing the new domain admin account](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/images/domain_admin.png)
+</Frame>
+
 ## Remote Access Server with NAT
 
 Install the **Remote Access** role and configure it with **NAT**.
 
 This is what lets the Windows 11 client sit on a private, isolated virtual network and still reach the internet. The DC translates the client's private source addresses onto its own NAT adapter, forwards the traffic out, and translates the responses back — exactly what a small office router does, running as a Windows role instead.
+
+<Frame caption="Remote Access role configured with NAT">
+  ![Routing and Remote Access console with NAT configured](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/images/ras.png)
+</Frame>
+
+<Frame caption="The domain controller acting as a router for the isolated network">
+  ![Routing configuration on the domain controller](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/images/router.png)
+</Frame>
 
 <Info>
   NAT is configured against the **NAT adapter** as the public interface, with the internal adapter as the private side. Getting these the wrong way round is a common misstep and produces a client that can reach the DC but nothing beyond it.
@@ -28,6 +40,10 @@ This is what lets the Windows 11 client sit on a private, isolated virtual netwo
 Install the **DHCP Server** role so the Windows 11 client can obtain an address automatically rather than being configured by hand.
 
 Once the role is installed, create a scope covering the isolated network's address range. The scope is what actually hands out leases; installing the role alone does nothing.
+
+<Frame caption="DHCP server with a scope configured for the isolated network">
+  ![DHCP console showing the configured scope](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/images/dhcp_server.png)
+</Frame>
 
 ### Scope Options: The Gateway
 
@@ -63,6 +79,10 @@ Set-ExecutionPolicy Unrestricted
 
 Then change into the directory holding the script and its names file, and execute it. The script reads through the names list and creates a domain account for each entry.
 
+<Frame caption="Running the user-provisioning script in PowerShell">
+  ![PowerShell running the user creation script](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/images/powershell_script.png)
+</Frame>
+
 <Warning>
   `Unrestricted` disables a real safety control and is appropriate only in an isolated lab. On any machine that matters, prefer `RemoteSigned`, or unblock the specific file with `Unblock-File` rather than lowering the policy for everything.
 </Warning>
@@ -70,6 +90,10 @@ Then change into the directory holding the script and its names file, and execut
 ### Verifying the Accounts
 
 After the script finishes, reopen Active Directory Users and Computers. The generated accounts appear in the directory — over a thousand of them — giving the lab a population large enough to make later exercises meaningful rather than trivial.
+
+<Frame caption="Over a thousand generated accounts in Active Directory Users and Computers">
+  ![Active Directory Users and Computers listing the bulk-created accounts](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/images/users_created.png)
+</Frame>
 
 ## Next
 
