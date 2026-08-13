@@ -16,6 +16,10 @@ The Log Analytics workspace is queried using KQL, filtering security events down
 
 Without filtering, the volume is the problem rather than the finding. A honeypot with no firewall produces a continuous stream, and the analytical work is deciding which slice of it answers a question.
 
+<Frame caption="Querying security events in the Log Analytics workspace with KQL">
+  ![KQL query returning security events in Log Analytics](https://raw.githubusercontent.com/by-tayo/azure-soclab/main/images/kql_logging.png)
+</Frame>
+
 <Tip>
   Start with a narrow time window and widen it. A query scoped to the last hour returns fast and tells you whether your filter is even correct; the same query across a week just makes you wait to discover it wasn't.
 </Tip>
@@ -26,9 +30,17 @@ Security events record the source address of each attempt but nothing about wher
 
 This enrichment is what turns a table of failed logons into something you can look at and immediately understand.
 
+<Frame caption="Security events enriched with geographic data from source IP addresses">
+  ![Log Analytics results enriched with GeoIP location fields](https://raw.githubusercontent.com/by-tayo/azure-soclab/main/images/geoip_data.png)
+</Frame>
+
 ## The Live Attack Map
 
 Using the enriched data, a live attack map visualises incoming traffic by source location.
+
+<Frame caption="Live attack map plotting incoming authentication attempts by source location">
+  ![Microsoft Sentinel workbook showing a world map of attack sources](https://raw.githubusercontent.com/by-tayo/azure-soclab/main/images/live_attack_map.png)
+</Frame>
 
 The lab observed this in two passes:
 
