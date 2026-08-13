@@ -9,9 +9,17 @@ A pipeline with six hops fails in six places, and a document missing from Kibana
 
 ## Verifying Kafka
 
-The most useful checkpoint sits in the middle. Exec into the Kafka container and read the `app-logs` topic directly with `kafka-console-consumer`.
+The most useful checkpoint sits in the middle. Exec into the Kafka container and read the `app-logs` topic directly:
 
-What should appear is a continuous stream of JSON messages matching the app's log patterns, with advancing offsets. That single check splits the pipeline cleanly in half:
+```bash
+docker compose exec kafka kafka-console-consumer \
+  --bootstrap-server kafka:9092 \
+  --topic app-logs \
+  --from-beginning \
+  --max-messages 5
+```
+
+What should appear is JSON messages matching the app's log patterns, with advancing offsets. That single check splits the pipeline cleanly in half:
 
 | Kafka shows messages? | Where the fault is |
 | --- | --- |
@@ -20,7 +28,14 @@ What should appear is a continuous stream of JSON messages matching the app's lo
 
 ## Verifying Elasticsearch
 
-With messages confirmed in Kafka, check that documents are landing in Elasticsearch with correctly parsed fields and timestamps. Documents present but with fields unparsed points at the Logstash filter rather than at transport.
+With messages confirmed in Kafka, check that documents are landing with correctly parsed fields:
+
+```bash
+curl -s "http://localhost:9200/_cat/indices/logs-*?v"
+curl -s "http://localhost:9200/logs-*/_search?size=1&pretty"
+```
+
+The first confirms indices exist and are growing; the second shows a single document so you can see whether `level`, `msg`, `user_id`, and `latency_ms` came through as fields rather than sitting unparsed inside `message`. Documents present but fields missing points at the Logstash filter rather than at transport.
 
 Because indices are backed by the named `esdata` volume, this data persists across restarts — so a restart that appears to lose everything indicates a volume problem, not an ingestion one.
 
@@ -32,7 +47,9 @@ In Nagios, Elasticsearch and Kibana should both report healthy, with state and t
 
 ## Security Posture
 
-The stack runs with `xpack.security.enabled=false` and no TLS. This keeps local setup friction-free and is **not** suitable for anything beyond localhost.
+The stack runs with `xpack.security.enabled=false` and no TLS, set directly in the Elasticsearch service environment. This keeps local setup friction-free and is **not** suitable for anything beyond localhost.
+
+Elasticsearch also runs `discovery.type=single-node` with a 512 MB heap (`ES_JAVA_OPTS=-Xms512m -Xmx512m`) — fine for a laptop demo, undersized for anything real.
 
 Hardening it for shared or production use means four changes:
 
@@ -58,7 +75,8 @@ Hardening it for shared or production use means four changes:
 ## Future Improvements
 
 - Add Kibana dashboards — bar charts by log level, pie charts by service — as exportable saved objects
-- Wire the Watcher alert, or Kibana's own alerting rules, to a real notification channel
+- Fix the Watcher threshold so it fires on an actual spike rather than the app's constant error rate, and confirm the `level` field mapping the query relies on
+- Wire the alert to a real notification channel instead of the Watcher log
 - Deploy to Kubernetes, Docker Swarm, or Elastic Cloud for higher availability and scale
 - Integrate Nagios notifications for critical outages and correlate them with Kibana error spikes
 - Add log rotation for `logs/app.log` so long-running local demos don't grow the file unbounded
