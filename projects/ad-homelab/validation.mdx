@@ -5,50 +5,35 @@ description: "Placing the Windows 11 client on the isolated network, joining it 
 icon: "circle-check"
 ---
 
-Everything built so far is theory until a client uses it. This phase puts the Windows 11 machine on the isolated network, joins it to the domain, and confirms each link in the chain — addressing, routing, and authentication — actually holds.
+This lab is a work in progress rather than a finished build. This page tracks what's actually been verified against what's still planned, updated as each phase lands.
 
-## Placing the Client on the Internal Network
+## Confirmed Working
 
-For the Windows 11 VM to sit inside the private internal network, its adapter is switched over in the VM's network settings to act as an internal NIC rather than using NAT directly. Once it is on that network, it has no independent path out: it depends entirely on the domain controller.
-
-The client is then left to obtain its address automatically. If the DHCP scope is configured correctly, it leases an address from the domain controller — which is also its route to the internet, by way of the NAT configuration on the DC.
-
-## Confirming the Lease
-
-The cleanest place to verify addressing is from the server side rather than the client. On the domain controller, open the DHCP console and check **Address Leases** for the scope.
-
-The client appears there with the address it was issued. Verifying from the DC confirms two things at once: that the client reached the DHCP server, and that the server considers the lease valid.
-
-<Tip>
-  If no lease appears, the problem is upstream of Active Directory — the client is not reaching the DHCP server at all. Check that both VMs are attached to the same internal network in VMware before touching anything inside Windows.
-</Tip>
-
-## Joining the Domain
-
-With addressing working, the client is configured as a member of the domain. This is the point where DNS matters: the client locates the domain controller through the DNS records AD DS published during promotion, which is why the DC had to be the client's DNS server.
-
-## Verifying Domain Login
-
-The final check is logging into the client using a domain account rather than a local one — authenticating against the domain, not the machine.
-
-A successful domain login means the entire chain worked:
-
-| Component | What a successful login proves |
+| Item | Verification |
 | --- | --- |
-| DHCP | The client leased a valid address on the internal network |
-| Scope options | The client has a default gateway and can route off-subnet |
-| RAS with NAT | Traffic from the isolated network reaches the internet |
-| DNS | The client resolved and located the domain controller |
-| AD DS | The domain accepted the credentials and authenticated the account |
+| Domain controller promoted | `dcdiag` and `repadmin /replsummary` run clean (aside from a benign `SystemLog` false-positive — see [Build](/projects/ad-homelab/build)) |
+| Host-only network isolation | `VMnet1` static addressing confirmed, DHCP disabled, no cross-talk with the home network |
+| OU tree and department groups | 8 departments, each with `Users`/`Groups`/`Computers` sub-OUs and a `-Staff` group, built via `setup-ou-structure.ps1` |
+| Bulk user provisioning | 1,050 accounts created, 0 skipped, verified via `Get-ADUser -Filter * -SearchBase 'OU=Corp,DC=corp,DC=lab' \| Measure-Object` |
+| Help-desk delegation | `Reset user passwords` permission delegated to the `Helpdesk` group on the `IT` OU |
 
-If any one of those were misconfigured, the login would fail — which makes it a useful single test rather than five separate ones.
+## In Progress / Queued
 
-## Outcome
+<Steps>
+  <Step title="GPOs">
+    At least 2–3 Group Policy Objects that do something observable — a password policy, a desktop restriction, a mapped drive — applied and confirmed on a domain-joined machine.
+  </Step>
+  <Step title="Client join">
+    A Windows 11 client (`CLIENT01`) built on `VMnet1` with a static IP, joined to `corp.lab`, and used to confirm GPOs actually apply (`gpupdate /force`).
+  </Step>
+  <Step title="Security telemetry">
+    Sysmon deployed to DC01 and the client, forwarding to a log server (Splunk or Wazuh) for the blue-team half of the lab.
+  </Step>
+  <Step title="Attacker tooling">
+    The existing Kali VM wired onto `VMnet1` with a second (host-only) network adapter, BloodHound collection run against the domain, and a first attack/detection scenario (Kerberoasting or password spray) run and documented end to end.
+  </Step>
+</Steps>
 
-The lab now stands as a functioning Active Directory environment: a domain controller handling directory, DNS, addressing, and routing; a domain-joined Windows 11 client on an isolated network with working internet access; and a directory populated with over a thousand user accounts.
+## Why This Page Reads Like a Checklist
 
-That population is the point. A domain with two accounts cannot demonstrate much, but one with a realistic user base is a foundation for the next stage — building out a corporate network simulation and implementing security strategies against it.
-
-<Note>
-  Source repository: [by-tayo/ad-homelab](https://github.com/by-tayo/ad-homelab)
-</Note>
+A completed writeup with a tidy "everything worked" narrative is less useful than an honest record of what's actually been done — this page exists so the state of the lab is always clear at a glance, rather than implying validation that hasn't happened yet. Each item above moves to "Confirmed Working" once it's actually been run and checked, not before.

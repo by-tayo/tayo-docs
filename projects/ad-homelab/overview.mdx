@@ -5,78 +5,76 @@ description: "Building a Windows Server 2022 domain controller and Windows 11 cl
 icon: "sitemap"
 ---
 
-This lab builds a working Active Directory environment from scratch: a Windows Server 2022 domain controller, a Windows 11 client joined to the domain, and an isolated internal network that still reaches the internet through the DC. The goal is a corporate network simulation — a realistic base to layer security practices onto later, rather than a one-off exercise in clicking through a role installation wizard.
-
-The part worth paying attention to is the networking. The client sits on a private, isolated network with no direct route out. Everything it does — DHCP lease, DNS resolution, internet access — depends on the domain controller being configured correctly as gateway, DHCP server, and NAT router. Get one of those wrong and the client silently fails in a way that looks like an AD problem but isn't.
+This lab is built to do double duty: a realistic Active Directory environment for practicing day-to-day sysadmin work — domain setup, OU design, bulk provisioning, delegation, GPOs — and a self-contained range for practicing offensive AD techniques and the detection side of the same attacks. It's sized to run comfortably alongside a security toolkit on a single 32GB host, using a hypervisor that's now free for personal use.
 
 <CardGroup cols={2}>
   <Card title="Hypervisor" icon="server">
-    VMware Workstation Pro 17
+    VMware Workstation Pro (free for personal use)
   </Card>
 
   <Card title="Domain Controller" icon="windows">
-    Windows Server 2022
+    Windows Server 2022 Datacenter (Evaluation)
   </Card>
 
-  <Card title="Client" icon="desktop">
-    Windows 11
+  <Card title="Directory" icon="users">
+    1,050 users across 8 departments
   </Card>
 
   <Card title="Provisioning" icon="terminal">
-    PowerShell
+    PowerShell \+ CSV, bulk-scripted
   </Card>
 </CardGroup>
 
-## What Gets Built
+## What's Built So Far
 
 ```text
-DC (Server 2022) ─┬─ NAT adapter ────────→ Internet
-                  └─ Internal adapter ───→ Isolated LAN ──→ Windows 11 client
+Host (32GB RAM, VMware Workstation Pro)
+ ├─ VMnet1 (host-only, 192.168.125.0/24, DHCP off)
+ │    └─ DC01 — Windows Server 2022 Datacenter, static 192.168.125.10
+ ├─ VMnet8 (NAT — VMware-managed, not DC-based)
+ │    └─ internet access for updates/activation
+ └─ Kali attacker VM (existing box, being wired onto VMnet1)
 
-Roles on the DC: AD DS · DNS · DHCP · RAS with NAT
+DC01 roles: AD DS + DNS
+Domain: corp.lab (new forest)
 ```
 
-The domain controller runs four things that matter: Active Directory Domain Services for the domain itself, DNS as a dependency of AD DS, DHCP so the client can lease an address without manual configuration, and Remote Access Server with NAT so traffic from the isolated network can reach the internet through the DC's second adapter.
+Unlike a design where the domain controller itself runs Routing and Remote Access with NAT, this lab lets VMware handle NAT and isolation directly — a host-only virtual network (`VMnet1`) carries all domain traffic with static IPs and no DHCP, while a separate VMware-managed NAT network (`VMnet8`) gives each VM internet access independently. Simpler to reason about, and one less role to misconfigure.
 
 ## Build Phases
 
 <Steps>
   <Step title="Architecture">
-    The dual-adapter design on the domain controller, why the client is isolated, and how traffic actually flows out of the private network.
+    The VMware networking design — host-only isolation vs. NAT, static addressing, and how the OU/department structure is laid out.
 
-    → [Network Architecture](/projects/ad-homelab/architecture)
+    → [Network & Directory Architecture](/projects/ad-homelab/architecture)
   </Step>
   <Step title="Build">
-    Provisioning the server VM, configuring the internal adapter with a static address and DNS, installing AD DS, and promoting the machine to a domain controller.
+    Provisioning the domain controller VM, configuring the host-only network, installing AD DS, and promoting the machine to create the `corp.lab` forest.
 
     → [Building the Domain Controller](/projects/ad-homelab/build)
   </Step>
   <Step title="Configuration">
-    Creating the domain admin account, standing up RAS with NAT, configuring DHCP scope options, and bulk-provisioning over a thousand users with PowerShell.
+    Scripting the OU tree and department groups, bulk-provisioning 1,050 users from a generated CSV, and delegating help-desk permissions.
 
-    → [Roles & User Provisioning](/projects/ad-homelab/configuration)
+    → [OU Structure & Bulk Provisioning](/projects/ad-homelab/configuration)
   </Step>
-  <Step title="Validation">
-    Joining the Windows 11 client to the domain and confirming the whole chain works — lease issued, gateway reachable, domain login successful.
+  <Step title="Validation & Next Steps">
+    What's been verified so far, and what's still queued — GPOs, client join, and the first attack/detection scenario.
 
-    → [Joining & Verifying the Client](/projects/ad-homelab/validation)
+    → [Status & Next Steps](/projects/ad-homelab/validation)
   </Step>
 </Steps>
 
 ## Skills Exercised
 
-- Active Directory Domain Services installation and domain creation
-- Windows Server role management (DNS, DHCP, Remote Access)
-- NAT configuration and routing between isolated and external networks
-- DHCP scope and scope option configuration
-- PowerShell scripting and execution policy handling
-- Bulk user account provisioning at scale
-- Domain join and client-side network troubleshooting
+- Active Directory Domain Services installation and forest/domain creation
+- VMware Workstation networking — host-only isolation, static addressing, virtual network editor configuration
+- OU design and department-based security group structure, built via PowerShell rather than clicking through ADUC
+- Bulk user provisioning at scale (1,050 accounts) from a CSV, including idempotent re-runs and progress reporting
+- Real deployment troubleshooting: PowerShell execution policy, file corruption across a network share, and rewriting scripts to avoid fragile syntax (backtick line-continuations) under real-world copy conditions
+- Least-privilege delegation of administrative control
 
 <Note>
-  Source repository: [by-tayo/ad-homelab](https://github.com/by-tayo/ad-homelab)
+  This lab is actively being built. This documentation is updated as each phase completes, so treat later pages as more current than earlier ones.
 </Note>
-
-<Info>
-  The original build followed along with lab material from Josh Madakor, a creator in the cybersecurity and IT space.
-</Info>

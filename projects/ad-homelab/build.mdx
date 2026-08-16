@@ -5,42 +5,94 @@ description: "Provisioning the Windows Server 2022 VM in VMware Workstation Pro,
 icon: "screwdriver-wrench"
 ---
 
-This phase takes a bare Windows Server 2022 VM and turns it into a functioning domain controller. Nothing here is complicated on its own, but the order matters — networking gets configured before the AD DS role goes on, because promotion bakes in the machine's name and address.
+This phase takes a bare Windows Server 2022 VM to a functioning domain controller. Networking gets configured before the AD DS role goes on, since promotion registers DNS records against whatever address the machine has at the time.
 
 <Steps>
-  <Step title="Provision the server VM">
-    Create the Windows Server 2022 virtual machine in VMware Workstation Pro 17 and complete the initial out-of-box setup. This machine becomes the domain controller and the default gateway for the isolated network, so give it enough resources to comfortably run four roles at once.
+  <Step title="Set up the host-only network">
+    In VMware Workstation's Virtual Network Editor, confirm (or create) a host-only network — `VMnet1` in this build, subnet `192.168.125.0/24`. Uncheck **"Use local DHCP service to distribute IP addresses to VMs"**, since every machine on this network gets a static IP by hand.
   </Step>
-  <Step title="Add the second network adapter">
-    Configure two network adapters on the VM. Attach the first to NAT for internet access, and the second to an internal, isolated network that only the lab machines can reach.
+  <Step title="Provision the VM">
+    Create the VM: 2 vCPU, 4GB RAM, 60GB disk. Attach two network adapters — one set to **Custom → VMnet1** (host-only), one set to **NAT**. Install **Windows Server 2022 Datacenter Evaluation (Desktop Experience)**.
 
-    In VMware Workstation the adapter type is set per-NIC in the VM settings — confirm both are present and connected before booting into the guest, since a missing adapter is easier to fix here than to diagnose later from inside Windows.
+    <Frame caption="VM Settings — network adapter set to Custom (VMnet1)">
+      ![VMware Workstation VM settings showing the network adapter set to Custom VMnet1](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/vm_network_adapter_vmnet1.png)
+    </Frame>
+
+    <Note>
+      Datacenter and Standard editions behave identically for everything in this build (AD DS, DNS, GPOs) — Datacenter's extra features are enterprise/hosting-provider-specific and don't come into play here. Use whichever evaluation ISO you already have.
+    </Note>
   </Step>
-  <Step title="Configure the internal adapter">
-    Inside Windows, open the network connections and configure the internal adapter manually with a static IP address, subnet mask, and DNS setting. The NAT adapter can be left on automatic — VMware's NAT service will supply its address.
+  <Step title="Configure the static IP">
+    Inside Windows, set the `VMnet1` adapter to a static IP — `192.168.125.10`, subnet mask `255.255.255.0`, no gateway (this adapter is domain-only, not an internet path), DNS pointed at `127.0.0.1` since this machine will run its own AD-integrated DNS once promoted. Leave the NAT adapter on automatic/DHCP.
 
-    Naming the adapters at this point (`Internal` and `NAT`, or similar) saves confusion for the rest of the build, since you will be returning to these settings when configuring DHCP and RAS.
+    <Frame caption="Network Connections on DC01">
+      ![Windows Network Connections showing the Ethernet adapters on DC01](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/network_adapters.png)
+    </Frame>
   </Step>
-  <Step title="Install Active Directory Domain Services">
-    From Server Manager, add the AD DS role. The installation itself only stages the binaries — it does not create a domain.
-
-    DNS is installed alongside AD DS as a dependency. This is expected: Active Directory relies on DNS to publish the service records that clients use to locate domain controllers.
+  <Step title="Rename the computer">
+    Rename the machine to `DC01` before installing roles (System Properties → Rename this PC), and reboot. Doing this first avoids any confusion later between the machine name and DNS records.
   </Step>
-  <Step title="Promote the server and create the domain">
-    After the role installs, run the promotion wizard to create a new forest and domain. This is the step that actually brings Active Directory into existence, and the server reboots at the end of it.
+  <Step title="Install the AD DS role">
+    From Server Manager → **Add Roles and Features**, install **Active Directory Domain Services**. This only stages the binaries — it does not create a domain yet.
 
-    Once it comes back up, check the Local Server properties in Server Manager — the domain now appears in place of the previous workgroup, which is the quickest confirmation that promotion succeeded.
+    <Frame caption="Add Roles and Features Wizard — Active Directory Domain Services selected">
+      ![Add Roles and Features Wizard with AD DS checked on the Server Roles screen](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/ad_ds_role_install.png)
+    </Frame>
+  </Step>
+  <Step title="Promote to a domain controller">
+    Click the notification flag in Server Manager → **Promote this server to a domain controller** → **Add a new forest**, root domain `corp.lab`. Accept the DNS delegation warning (expected in a lab with no parent zone), set a DSRM password, and let it install and reboot.
+
+    <Frame caption="AD DS Configuration Wizard — Deployment Configuration screen">
+      ![AD DS Configuration Wizard showing the Add a new forest option with root domain corp.lab](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/ad_ds_deployment_config.png)
+    </Frame>
   </Step>
 </Steps>
 
-## Verifying the Domain
+## Verifying the Promotion
 
-The Local Server view in Server Manager is the first checkpoint. Before promotion the machine belongs to a workgroup; after promotion the properties list the domain name. If it still reads as a workgroup, promotion did not complete and there is no point continuing to the role configuration.
+After the reboot, log in as the domain Administrator and run two checks from an elevated PowerShell session:
+
+```powershell
+dcdiag
+repadmin /replsummary
+```
+
+`dcdiag` runs a full suite of domain controller health checks. In a fresh single-DC lab, most tests should come back `passed test`.
+
+<Tip>
+  A **`failed test SystemLog`** result is common on a freshly promoted DC and usually not a real problem — that specific test just checks whether the Windows System Event Log has any Error/Warning entries from the last 24 hours, which a machine that just went through install → role add → promotion → reboot almost always has (time-sync warnings, driver init messages). It isn't AD-specific. Check Event Viewer's System log for anything sourced from **NTDS**, **DNS Server**, or **Netlogon** specifically — if none of those appear as Errors, and the rest of `dcdiag` (Advertising, Replications, NetLogons, Services) passed, the DC is functionally healthy.
+</Tip>
+
+## File Transfer for Later Scripts
+
+Bulk provisioning (next phase) needs PowerShell scripts and a CSV copied onto DC01. VMware's **Shared Folders** feature handles this, but it depends on **VMware Tools** being installed inside the guest — without it, `\\vmware-host\Shared Folders\...` won't resolve even if the share is configured correctly on the host side.
+
+Install it via **VM → Install VMware Tools** in the Workstation menu, run `setup64.exe` from the mounted virtual CD inside Windows, and reboot. Then enable a shared folder pointing at a local (non-cloud-synced) folder on the host — OneDrive or similar cloud-sync folders can leave files as unmaterialized placeholders that VMware can't read correctly, so a plain local folder is more reliable.
+
+<Frame caption="The error hit before VMware Tools was installed in the guest">
+  ![Windows Network Error dialog: cannot access the vmware-host Shared Folders path](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/shared_folder_network_error.png)
+</Frame>
+
+<Frame caption="Add Shared Folder Wizard, configuring the local LabFiles path">
+  ![VMware Add Shared Folder Wizard with Host path and Name fields](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/vmware_shared_folders.png)
+</Frame>
 
 <Warning>
-  Configure the static IP on the internal adapter **before** promoting the server. Promotion registers the domain controller's DNS records against its current address, and changing that address afterwards means cleaning up stale records.
+  Copying `.ps1` files through a network share isn't always lossless — in this build, one script's content got corrupted in transit (the file ended up containing prose instead of code, which PowerShell then failed to parse with a string of confusing syntax errors). Here's what that actually looked like on-screen:
+
+  <Frame caption="The corrupted import-users.ps1 failing to parse — prose text where PowerShell code should be">
+    ![PowerShell parse errors from a corrupted script file](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/script_corruption_error.png)
+  </Frame>
+
+  Sanity-check any copied script before running it:
+
+  ```powershell
+  Get-Content .\scriptname.ps1 -TotalCount 5
+  ```
+
+  If that doesn't show recognizable PowerShell (comment headers, `Import-Module`, etc.), the file didn't transfer cleanly — re-copy it, or write it directly on the VM instead (see [Configuration](/projects/ad-homelab/configuration) for how the CSV was generated locally to sidestep this entirely).
 </Warning>
 
 ## What Comes Next
 
-At this point the domain exists but nothing uses it. The client cannot lease an address, cannot reach the internet, and there are no accounts beyond the built-in administrator. Those are handled in [Roles & User Provisioning](/projects/ad-homelab/configuration).
+At this point the domain exists but is otherwise empty — no OU structure, no departments, no users beyond the built-in Administrator. That's covered in [OU Structure & Bulk Provisioning](/projects/ad-homelab/configuration).

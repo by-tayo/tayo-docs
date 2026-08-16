@@ -5,72 +5,127 @@ description: "Creating the domain admin account, configuring Remote Access with 
 icon: "sliders"
 ---
 
-With the domain created, this phase makes it usable. Three things happen here: an administrative account gets created, the DC starts routing and addressing for the isolated network, and the directory gets populated with enough accounts to feel like a real organisation.
+With the domain created, this phase makes it look like an actual organization rather than a bare AD DS install. Everything here is done via PowerShell and a CSV rather than manually clicking through Active Directory Users and Computers — closer to how bulk provisioning is actually done in real environments, and a stronger demonstration of scripting ability than a GUI walkthrough.
 
-## Creating the Domain Admin Account
+## Getting Files Onto DC01
 
-From Windows Administrative Tools, open **Active Directory Users and Computers** and create a dedicated domain administrator account.
-
-This is worth doing rather than living in the built-in administrator account. Working as a purpose-created domain admin is closer to how real environments separate accounts, and it means the built-in account stays available as a fallback if something gets misconfigured.
-
-## Remote Access Server with NAT
-
-Install the **Remote Access** role and configure it with **NAT**.
-
-This is what lets the Windows 11 client sit on a private, isolated virtual network and still reach the internet. The DC translates the client's private source addresses onto its own NAT adapter, forwards the traffic out, and translates the responses back — exactly what a small office router does, running as a Windows role instead.
-
-<Info>
-  NAT is configured against the **NAT adapter** as the public interface, with the internal adapter as the private side. Getting these the wrong way round is a common misstep and produces a client that can reach the DC but nothing beyond it.
-</Info>
-
-## DHCP Server
-
-Install the **DHCP Server** role so the Windows 11 client can obtain an address automatically rather than being configured by hand.
-
-Once the role is installed, create a scope covering the isolated network's address range. The scope is what actually hands out leases; installing the role alone does nothing.
-
-### Scope Options: The Gateway
-
-A leased address on its own is not enough. The client has no default gateway, which means it can talk to machines on its own subnet and nowhere else.
-
-The fix is a **router option** configured in the DHCP scope options, along with a loopback address. Delivering the gateway through DHCP rather than configuring it on the client keeps the client zero-touch — which is the point of running DHCP in the first place.
-
-<Tip>
-  Scope options are set on the scope, not the server, unless you want them applied to every scope. In a single-scope lab the distinction does not bite, but it will the moment you add a second network.
-</Tip>
-
-## Bulk User Provisioning with PowerShell
-
-A domain with two accounts does not exercise anything. This build populates the directory with over a thousand users, driven from a PowerShell script and a names list.
-
-<CardGroup cols={2}>
-  <Card title="1_CREATE_USERS.ps1" icon="terminal">
-    A user-creation script, sourced externally and then edited to implement password security on the accounts it creates.
-  </Card>
-
-  <Card title="names.txt" icon="file-lines">
-    A list of over a thousand names, read by the script to generate the accounts.
-  </Card>
-</CardGroup>
-
-### Execution Policy
-
-PowerShell blocks scripts downloaded from the internet by default. To run the provisioning script, the execution policy is relaxed first:
+Scripts land on the host machine first, then get copied onto DC01 through the VMware shared folder set up in the previous phase:
 
 ```powershell
-Set-ExecutionPolicy Unrestricted
+New-Item -Path C:\Lab -ItemType Directory -Force
+Copy-Item "\\vmware-host\Shared Folders\LabFiles\*.ps1" -Destination C:\Lab
+Copy-Item "\\vmware-host\Shared Folders\LabFiles\*.csv" -Destination C:\Lab -ErrorAction SilentlyContinue
+cd C:\Lab
+Set-ExecutionPolicy RemoteSigned -Scope Process -Force
+Get-ChildItem *.ps1 | Unblock-File
 ```
 
-Then change into the directory holding the script and its names file, and execute it. The script reads through the names list and creates a domain account for each entry.
+`Set-ExecutionPolicy RemoteSigned -Scope Process` allows locally-created scripts to run for just this PowerShell session, without weakening the policy machine-wide. `Unblock-File` clears the "downloaded from the internet" flag Windows sometimes attaches to files that arrived via a network path.
+
+<Frame caption="The shared folder on DC01, before the scripts were copied into C:\Lab">
+  ![File Explorer showing the LabFiles shared folder with the PowerShell scripts and CSV](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/lab_scripts_folder.png)
+</Frame>
+
+<Frame caption="C:\Lab after the copy — the working directory the scripts actually run from">
+  ![PowerShell dir listing of C:\\Lab showing the four script and CSV files](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/lab_files_local_copy.png)
+</Frame>
+
+## Building the OU Tree and Groups
+
+`setup-ou-structure.ps1` creates the whole department structure in one run: a top-level `Corp` OU, eight department OUs (`IT`, `Finance`, `Sales`, `HR`, `Marketing`, `Engineering`, `Operations`, `Support`) each with `Users` / `Groups` / `Computers` sub-OUs, a `<Department>-Staff` security group per department, and a top-level `Helpdesk` group.
+
+```powershell
+Import-Module ActiveDirectory
+
+$domainDN = (Get-ADDomain).DistinguishedName
+$topOU    = "Corp"
+$departments = @("IT", "Finance", "Sales", "HR", "Marketing", "Engineering", "Operations", "Support")
+
+New-ADOrganizationalUnit -Name $topOU -Path $domainDN -ProtectedFromAccidentalDeletion $true -ErrorAction SilentlyContinue
+$topOUPath = "OU=$topOU,$domainDN"
+
+foreach ($dept in $departments) {
+    New-ADOrganizationalUnit -Name $dept -Path $topOUPath -ProtectedFromAccidentalDeletion $true -ErrorAction SilentlyContinue
+    $deptPath = "OU=$dept,$topOUPath"
+    foreach ($sub in @("Users", "Groups", "Computers")) {
+        New-ADOrganizationalUnit -Name $sub -Path $deptPath -ProtectedFromAccidentalDeletion $true -ErrorAction SilentlyContinue
+    }
+    New-ADGroup -Name "$dept-Staff" -GroupScope Global -GroupCategory Security -Path "OU=Groups,$deptPath" -ErrorAction SilentlyContinue
+}
+
+New-ADGroup -Name "Helpdesk" -GroupScope Global -GroupCategory Security -Path $topOUPath -ErrorAction SilentlyContinue
+```
+
+Run with `.\setup-ou-structure.ps1` — it's idempotent, so re-running it after adding a department to the list only creates what's missing.
+
+<Frame caption="The resulting OU tree in Active Directory Users and Computers — Corp with all eight department OUs">
+  ![Active Directory Users and Computers showing the Corp OU expanded with eight department OUs](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/adds_ou_structure.png)
+</Frame>
+
+## Generating 1,050 Users Without a Large File Transfer
+
+Rather than transferring a large pre-built CSV (which hit the same corruption issue as the scripts — see the warning on the [Build](/projects/ad-homelab/build) page), the user list is **generated directly on DC01** by a short script. It combines a first-name and last-name pool with the eight departments, dedupes `SamAccountName` collisions, and writes straight to `C:\Lab\users_1000.csv`:
+
+```powershell
+$firstNames = @("James","Mary","John", "..." )   # ~76 common first names
+$lastNames  = @("Smith","Johnson","Williams", "..." )  # ~50 common surnames
+$departments = @("IT","Finance","Sales","HR","Marketing","Engineering","Operations","Support")
+
+$rows = @()
+$usedSam = @{}
+$rand = New-Object System.Random(42)
+
+while ($rows.Count -lt 1050) {
+    $fn = $firstNames[$rand.Next(0, $firstNames.Count)]
+    $ln = $lastNames[$rand.Next(0, $lastNames.Count)]
+    $dept = $departments[$rand.Next(0, $departments.Count)]
+    $samBase = ($fn.Substring(0,1) + $ln).ToLower()
+    $sam = $samBase; $n = 1
+    while ($usedSam.ContainsKey($sam)) { $n++; $sam = "$samBase$n" }
+    $usedSam[$sam] = $true
+    $rows += [PSCustomObject]@{ FirstName=$fn; LastName=$ln; SamAccountName=$sam; Department=$dept; Password="P@ssw0rd123!" }
+}
+
+$rows | Export-Csv -Path C:\Lab\users_1000.csv -NoTypeInformation
+```
+
+```powershell
+.\generate-users.ps1
+```
+
+## Importing Users
+
+`import-users.ps1` reads the CSV, creates each account in the right department's `Users` OU, and adds it to that department's `-Staff` group. It looks up existing users and valid OUs **once** up front rather than per-row (important at 1,000\+ rows), reports progress every 50 users, and skips anyone who already exists — safe to re-run after editing the CSV.
+
+```powershell
+.\import-users.ps1
+```
+
+```text
+Done.
+  Created:            1050
+  Skipped (existing): 0
+  Skipped (no OU):    0
+```
+
+<Frame caption="The actual import-users.ps1 output — 1,050 created, 0 skipped">
+  ![PowerShell terminal output showing 1050 users created and 0 skipped](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/import_users_success.png)
+</Frame>
 
 <Warning>
-  `Unrestricted` disables a real safety control and is appropriate only in an isolated lab. On any machine that matters, prefer `RemoteSigned`, or unblock the specific file with `Unblock-File` rather than lowering the policy for everything.
+  The first version of this script used backtick (\`\`\`) line-continuations inside the `New-ADUser` call. That syntax is fragile against copy/network-share round-trips — trailing whitespace after a backtick silently breaks the continuation and produces confusing parse errors several lines later ("missing closing paren", "unexpected token"). The fix was rewriting the parameter list as a hashtable and splatting it (`New-ADUser @userParams`), which has no line-continuation characters to corrupt.
 </Warning>
 
-### Verifying the Accounts
+## Delegating Help-Desk Access
 
-After the script finishes, reopen Active Directory Users and Computers. The generated accounts appear in the directory — over a thousand of them — giving the lab a population large enough to make later exercises meaningful rather than trivial.
+Rather than leaving every administrative task tied to Domain Admin, the `Helpdesk` group gets a single narrow permission — resetting passwords — delegated on the `IT` OU:
+
+1. In **Active Directory Users and Computers**, right-click the `IT` OU → **Delegate Control...**
+2. Add the `Helpdesk` group.
+3. Grant only **"Reset user passwords and force password change at next logon."**
+
+This is the least-privilege demonstration: a member of `Helpdesk` can reset passwords in `IT` and nothing else — no user creation, no GPO edits, no other OUs — which is the actual point of delegation over handing out broader admin rights.
 
 ## Next
 
-The domain is now addressed, routed, and populated. The remaining question is whether a client can actually use it — covered in [Joining & Verifying the Client](/projects/ad-homelab/validation).
+The directory is now populated and partially delegated. Still queued: GPOs that do something observable, a domain-joined client to prove policy actually applies, and the first attack/detection scenario. Current status is tracked on the [Status & Next Steps](/projects/ad-homelab/validation) page.
