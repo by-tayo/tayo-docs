@@ -23,11 +23,11 @@ Get-ChildItem *.ps1 | Unblock-File
 `Set-ExecutionPolicy RemoteSigned -Scope Process` allows locally-created scripts to run for just this PowerShell session, without weakening the policy machine-wide. `Unblock-File` clears the "downloaded from the internet" flag Windows sometimes attaches to files that arrived via a network path.
 
 <Frame caption="The shared folder on DC01, before the scripts were copied into C:\Lab">
-  ![File Explorer showing the LabFiles shared folder with the PowerShell scripts and CSV](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/images/corp-lab/lab_scripts_folder.png)
+  ![File Explorer showing the LabFiles shared folder with the PowerShell scripts and CSV](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/lab_scripts_folder.png)
 </Frame>
 
 <Frame caption="C:\Lab after the copy — the working directory the scripts actually run from">
-  ![PowerShell dir listing of C:\\Lab showing the four script and CSV files](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/images/corp-lab/lab_files_local_copy.png)
+  ![PowerShell dir listing of C:\\Lab showing the four script and CSV files](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/lab_files_local_copy.png)
 </Frame>
 
 ## Building the OU Tree and Groups
@@ -59,7 +59,7 @@ New-ADGroup -Name "Helpdesk" -GroupScope Global -GroupCategory Security -Path $t
 Run with `.\setup-ou-structure.ps1` — it's idempotent, so re-running it after adding a department to the list only creates what's missing.
 
 <Frame caption="The resulting OU tree in Active Directory Users and Computers — Corp with all eight department OUs">
-  ![Active Directory Users and Computers showing the Corp OU expanded with eight department OUs](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/images/corp-lab/adds_ou_structure.png)
+  ![Active Directory Users and Computers showing the Corp OU expanded with eight department OUs](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/adds_ou_structure.png)
 </Frame>
 
 ## Generating 1,050 Users Without a Large File Transfer
@@ -109,7 +109,7 @@ Done.
 ```
 
 <Frame caption="The actual import-users.ps1 output — 1,050 created, 0 skipped">
-  ![PowerShell terminal output showing 1050 users created and 0 skipped](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/images/corp-lab/import_users_success.png)
+  ![PowerShell terminal output showing 1050 users created and 0 skipped](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/import_users_success.png)
 </Frame>
 
 <Warning>
