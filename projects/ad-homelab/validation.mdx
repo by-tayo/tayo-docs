@@ -1,7 +1,7 @@
 ---
 title: "Joining & Verifying the Client — Domain Join Validation"
 sidebarTitle: "Validation"
-description: "Placing the Windows 11 client on the isolated network, joining it to the domain, and verifying the lease, gateway, and domain login all work end to end."
+description: "Placing pfSense in front of the lab network, joining the Windows 11 client to the domain, and tracking what's verified against what's still queued."
 icon: "circle-check"
 ---
 
@@ -12,27 +12,30 @@ This lab is a work in progress rather than a finished build. This page tracks wh
 | Item | Verification |
 | --- | --- |
 | Domain controller promoted | `dcdiag` and `repadmin /replsummary` run clean (aside from a benign `SystemLog` false-positive — see [Build](/projects/ad-homelab/build)) |
-| Host-only network isolation | `VMnet1` static addressing confirmed, DHCP disabled, no cross-talk with the home network |
+| Host-only network isolation | `VMnet1` static addressing confirmed, no cross-talk with the home network |
+| pfSense routing | `ping` to the gateway (`192.168.125.254`) and to `8.8.8.8` returns 0% packet loss from both DC01 and CLIENT01 |
 | OU tree and department groups | 8 departments, each with `Users`/`Groups`/`Computers` sub-OUs and a `-Staff` group, built via `setup-ou-structure.ps1` |
 | Bulk user provisioning | 1,050 accounts created, 0 skipped, verified via `Get-ADUser -Filter * -SearchBase 'OU=Corp,DC=corp,DC=lab' \| Measure-Object` |
 | Help-desk delegation | `Reset user passwords` permission delegated to the `Helpdesk` group on the `IT` OU |
+| Client join | `CLIENT01` (Windows 11, local-account-only) built, given a static IP, and joined to `corp.lab` — confirmed via System Properties showing `Domain: corp.lab` and the computer object appearing in ADUC's default `Computers` container |
 
 ## In Progress / Queued
 
 <Steps>
   <Step title="GPOs">
-    At least 2–3 Group Policy Objects that do something observable — a password policy, a desktop restriction, a mapped drive — applied and confirmed on a domain-joined machine.
-  </Step>
-  <Step title="Client join">
-    A Windows 11 client (`CLIENT01`) built on `VMnet1` with a static IP, joined to `corp.lab`, and used to confirm GPOs actually apply (`gpupdate /force`).
+    At least 2–3 Group Policy Objects that do something observable — a password policy, a desktop restriction, a mapped drive — applied and confirmed on `CLIENT01` via `gpupdate /force`.
   </Step>
   <Step title="Security telemetry">
-    Sysmon deployed to DC01 and the client, forwarding to a log server (Splunk or Wazuh) for the blue-team half of the lab.
+    Sysmon deployed to DC01 and `CLIENT01`, forwarding to a log server (Splunk or Wazuh) for the blue-team half of the lab.
   </Step>
   <Step title="Attacker tooling">
-    The existing Kali VM wired onto `VMnet1` with a second (host-only) network adapter, BloodHound collection run against the domain, and a first attack/detection scenario (Kerberoasting or password spray) run and documented end to end.
+    The existing Kali VM wired onto `VMnet1` with a single network adapter (now that pfSense handles NAT for the whole network), BloodHound collection run against the domain, and a first attack/detection scenario (Kerberoasting or password spray) run and documented end to end.
   </Step>
 </Steps>
+
+<Note>
+  A couple of small loose ends from the pfSense migration: confirming the now-redundant `VMnet8` NAT adapters are fully removed from DC01 and `CLIENT01` (not just disconnected), and optionally renaming `CLIENT01`'s default `DESKTOP-XXXXXXX` hostname to something that matches the rest of the lab's naming.
+</Note>
 
 ## Why This Page Reads Like a Checklist
 

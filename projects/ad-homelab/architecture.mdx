@@ -1,44 +1,49 @@
 ---
-title: "AD Homelab Network Architecture — Dual-NIC Isolated Design"
+title: "AD Homelab Network Architecture — pfSense-Routed Isolated Design"
 sidebarTitle: "Architecture"
-description: "How the domain controller uses two network adapters to bridge an isolated internal network to the internet, acting as gateway, DNS server, and NAT router."
+description: "How pfSense CE provides routing, DHCP, and firewalling for the isolated lab network, and how the directory itself is organized."
 icon: "diagram-project"
 ---
 
-Two separate design decisions shape this lab: how the network isolates domain traffic, and how the directory itself is organized once it exists.
+Two separate design decisions shape this lab: how the network isolates and routes domain traffic, and how the directory itself is organized once it exists.
 
 ## Network Design
 
-Rather than having the domain controller run Routing and Remote Access with NAT (a pattern common in other AD homelab guides), this build lets VMware Workstation handle isolation and internet access directly, through two separate virtual networks:
+The network went through one real redesign. It originally had every lab VM carry two adapters — a static IP on an isolated host-only network, plus its own independent NAT adapter for internet access — with no shared gateway at all. That's since been replaced with a single dedicated router VM running pfSense Community Edition, sitting between the isolated network and the internet:
 
 <CardGroup cols={2}>
-  <Card title="VMnet1 — Host-only" icon="network-wired">
-    `192.168.125.0/24`, DHCP disabled. Carries all domain traffic between DC01 and future domain-joined machines. Fully isolated from the home network.
+  <Card title="VMnet1 — LAN" icon="network-wired">
+    `192.168.125.0/24`. pfSense's LAN interface (`192.168.125.254`) is the gateway, DHCP server, and firewall for every machine on this network. Each domain VM now needs only one adapter.
   </Card>
 
-  <Card title="VMnet8 — NAT" icon="globe">
-    VMware-managed NAT, DHCP-assigned. Gives each VM independent internet access for updates and activation, with no dependency on the DC for routing.
+  <Card title="VMnet8 — WAN" icon="globe">
+    VMware-managed NAT. Only pfSense's WAN interface sits here — it's the single exit point for the whole lab network's internet access, instead of every VM having its own NAT adapter.
   </Card>
 </CardGroup>
 
-Every lab VM gets **two** adapters: one on `VMnet1` with a static IP, and one on `VMnet8` for outbound internet access. DNS on the `VMnet1` adapter points at DC01 itself (`127.0.0.1` on the DC, `192.168.125.10` on everything else), since DC01 runs AD-integrated DNS.
-
 ```text
-DC01            192.168.125.10   (VMnet1, static)  +  NAT adapter (VMnet8, DHCP)
-CLIENT01 *       192.168.125.11   (VMnet1, static)  +  NAT adapter (VMnet8, DHCP)
-LOGSRV *         192.168.125.12   (VMnet1, static)  +  NAT adapter (VMnet8, DHCP)
-ATTACKER (Kali)  192.168.125.13   (VMnet1, static)  +  NAT adapter (VMnet8, DHCP)
+pfSense (LAN)      192.168.125.254   (VMnet1, static)  +  WAN adapter (VMnet8, DHCP)
+DC01               192.168.125.10    (VMnet1, static)
+CLIENT01           192.168.125.20    (VMnet1, static)
+LOGSRV *           192.168.125.30    (VMnet1, static)
+ATTACKER (Kali) *  192.168.125.40    (VMnet1, static)
 
 * planned, not yet built
 ```
 
 <Tip>
-  DHCP is deliberately disabled on `VMnet1`. Every machine on the domain network gets a static IP assigned by hand — with only a handful of VMs, this avoids any chance of DHCP handing out an address that collides with one already in use.
+  `.1` on `VMnet1` is already claimed by the host machine's own virtual adapter, which VMware creates automatically for host-only networks — that's why pfSense's LAN interface sits at `.254` instead of the more conventional `.1`. DHCP is enabled on pfSense's LAN interface with a scope reserved for future/ad-hoc VMs (`192.168.125.100`–`199`), but the core domain machines keep static IPs assigned by hand for predictability.
 </Tip>
 
-## Why Not DC-Based NAT?
+## Why pfSense Instead of Per-VM NAT
 
-Having the domain controller itself act as gateway, DHCP server, and NAT router (via the Routing and Remote Access role) is a well-known pattern, but it adds three extra roles' worth of failure surface to troubleshoot before the domain is even usable. Letting VMware own the NAT and isolation boundary keeps the DC focused on what it's actually there to demonstrate — AD DS, DNS, OU/GPO design — and makes networking failures immediately distinguishable from AD failures.
+The original per-VM design was simple to reason about on paper, but it turned out to be the more fragile choice in practice: with no shared gateway, each machine's networking was independently something that could break — and it did. The domain controller's static IP silently reverted to DHCP/APIPA at one point, which took real troubleshooting time to catch, since nothing about the symptom (client can't reach the DC) pointed directly at "the DC's own IP changed."
+
+Rather than keep chasing one-off networking bugs per VM, the lab now routes everything through a single purpose-built router. This is the same reasoning that ruled out putting Routing and Remote Access on the domain controller in the first place, just applied more thoroughly: don't tangle routing, DHCP, and NAT roles up with AD roles, and don't scatter them across every VM either. pfSense CE:
+
+- centralizes DHCP, NAT, and gateway behavior in one predictable, purpose-built place instead of N independent per-VM configurations
+- comes with a real firewall to build rules and logging on top of later — a natural step toward the IDS/detection side of this lab (Suricata is available as a pfSense package if that gets picked up)
+- means every domain VM only needs a single network adapter going forward, simplifying every future VM added to the lab
 
 ## Directory Structure
 
@@ -62,5 +67,9 @@ corp.lab
 ```
 
 Each department OU has its own `Users`, `Groups`, and `Computers` sub-OUs, and its own `<Department>-Staff` security group. A top-level `Helpdesk` group exists separately, scoped for a single delegated permission (password resets) rather than broad admin rights — the point being to demonstrate least-privilege delegation, not just run everything as Domain Admin.
+
+<Note>
+  Domain-joined machines like `CLIENT01` land in AD's default `Computers` container when joined the standard way, not directly into a department's `Computers` sub-OU — moving them into the matching department OU is still a manual (or scripted) step, not yet automated in this lab.
+</Note>
 
 How this structure gets built — entirely via PowerShell rather than manually clicking through Active Directory Users and Computers — is covered on the [Configuration](/projects/ad-homelab/configuration) page.

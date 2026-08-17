@@ -1,7 +1,7 @@
 ---
 title: "Building the Domain Controller — AD DS Installation & Promotion"
 sidebarTitle: "Build"
-description: "Provisioning the Windows Server 2022 VM in VMware Workstation Pro, configuring dual network adapters, and installing Active Directory Domain Services to create the domain."
+description: "Provisioning the Windows Server 2022 domain controller, standing up pfSense as the lab router, and building and joining the Windows 11 client to the domain."
 icon: "screwdriver-wrench"
 ---
 
@@ -93,6 +93,64 @@ Install it via **VM → Install VMware Tools** in the Workstation menu, run `set
   If that doesn't show recognizable PowerShell (comment headers, `Import-Module`, etc.), the file didn't transfer cleanly — re-copy it, or write it directly on the VM instead (see [Configuration](/projects/ad-homelab/configuration) for how the CSV was generated locally to sidestep this entirely).
 </Warning>
 
+## Standing Up pfSense as the Lab Router
+
+With the DC promoted and users on their way, the network itself got rebuilt around a dedicated router VM rather than continuing with a NAT adapter per machine (see [Architecture](/projects/ad-homelab/architecture) for why).
+
+<Steps>
+  <Step title="Download pfSense CE">
+    Grabbed the Netgate Installer image for pfSense Community Edition — `2.8.1-RELEASE`, the current stable release. The installer also offers a `2.9.0` beta by default; picked the stable option instead.
+  </Step>
+  <Step title="Provision the pfSense VM">
+    New VM with two adapters: one **NAT** (`VMnet8`, WAN) and one **Custom → VMnet1** (host-only, LAN). pfSense doesn't need much — 1 vCPU and 1GB\+ RAM is enough for CE at this scale.
+  </Step>
+  <Step title="Assign interfaces">
+    In the installer's interface-assignment step, matched `em0` to WAN (the NAT adapter) and `em1` to LAN (`VMnet1`), based on the order the adapters were added to the VM.
+  </Step>
+  <Step title="Configure WAN and LAN">
+    WAN stayed on its default — DHCP client, pulling an address from VMware's NAT DHCP. LAN got changed from the installer's default `192.168.1.1/24` to `192.168.125.254/24` (see [Architecture](/projects/ad-homelab/architecture) for why `.254` instead of `.1`), with the DHCP server range set to `192.168.125.100`–`199`.
+  </Step>
+  <Step title="Finish the install">
+    Kept the installer's default ZFS/GPT filesystem options and rebooted into the new pfSense install.
+  </Step>
+  <Step title="Initial GUI setup">
+    Logged into `https://192.168.125.254` (a self-signed cert warning is expected — safe to bypass in a lab), signed in with the default `admin`/`pfsense` credentials, and ran the setup wizard: hostname/domain, DNS servers set to `1.1.1.1` primary / `8.8.8.8` secondary (left "Allow DNS server list to be overridden by DHCP/PPP on WAN" checked), confirmed the WAN/LAN interface assignment, and set a new admin password — the wizard requires changing it off the default.
+  </Step>
+</Steps>
+
+## Rewiring DC01 and CLIENT01 Through pfSense
+
+Once pfSense was routing, both existing VMs needed to drop their old per-VM NAT adapter and point at the new gateway instead:
+
+1. In VM Settings, removed (or disconnected) each machine's `VMnet8` NAT adapter — a single `VMnet1` adapter is now enough.
+2. Re-opened each machine's static IP properties and added the new default gateway, `192.168.125.254`, alongside the existing address:
+   - **DC01** — `192.168.125.10`, DNS `127.0.0.1` (still its own AD-integrated DNS)
+   - **CLIENT01** — `192.168.125.20`, DNS `192.168.125.10` (DC01)
+3. Verified end-to-end connectivity with `ping 192.168.125.254` and `ping 8.8.8.8` from both machines — 0% packet loss confirmed pfSense was routing correctly before moving on.
+
+<Warning>
+  When reopening a VM's static-IP dialog to add the gateway, don't assume only the gateway field is blank — in this build the IP and subnet mask fields came back empty too and needed re-entering in full. Also worth double-checking after any VM reboot: a stale or duplicate IP binding can silently push a machine back to DHCP/APIPA. `Get-NetIPAddress -AddressFamily IPv4` shows every bound address (not just the "preferred" one `ipconfig` reports), and `Remove-NetIPAddress -Confirm:$false` clears a stale entry before re-adding a clean static IP.
+</Warning>
+
+## Building CLIENT01 and Joining the Domain
+
+<Steps>
+  <Step title="Provision the VM">
+    New VM: Custom (advanced) configuration, 2 vCPU, 4GB RAM, 60GB disk, one network adapter set to **Custom → VMnet1**. Guest OS set to Windows 11, which makes VMware auto-add and encrypt a virtual TPM 2.0 — required for Windows 11 setup. **Windows 11 Pro** was used, since Home cannot join a domain.
+  </Step>
+  <Step title="Local account only, no Microsoft sign-in">
+    To keep CLIENT01 as a clean local-admin baseline — useful later for network/malware forensics work — rather than tying it to a Microsoft account, the OOBE network/sign-in requirement was bypassed: `Shift+F10` during setup for a command prompt, then `start ms-cxh:localonly` to drop straight into a local-account flow. (The registry fallback — `reg add HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\OOBE /v BypassNRO /t REG_DWORD /d 1 /f` followed by a reboot — also works if that shortcut changes in a future Windows build.)
+  </Step>
+  <Step title="Static IP">
+    Set the `VMnet1` adapter to `192.168.125.20`, mask `255.255.255.0`, gateway `192.168.125.254` (pfSense), DNS `192.168.125.10` (DC01).
+  </Step>
+  <Step title="Join the domain">
+    `sysdm.cpl` → Computer Name tab → Change → **Domain**, entered `corp.lab`, authenticated as `CORP\Administrator`, and restarted.
+  </Step>
+</Steps>
+
+Confirmed via **System Properties** showing `Domain: corp.lab`, and via **Active Directory Users and Computers** on DC01 showing the new computer object in the default `Computers` container.
+
 ## What Comes Next
 
-At this point the domain exists but is otherwise empty — no OU structure, no departments, no users beyond the built-in Administrator. That's covered in [OU Structure & Bulk Provisioning](/projects/ad-homelab/configuration).
+At this point the domain and network are both up, and the client is joined. Still ahead: writing GPOs that do something observable, deploying security telemetry, and wiring in the attacker VM — tracked on [Status & Next Steps](/projects/ad-homelab/validation). The bulk-provisioning phase that populated the directory with 1,050 users is covered separately in [OU Structure & Bulk Provisioning](/projects/ad-homelab/configuration).
