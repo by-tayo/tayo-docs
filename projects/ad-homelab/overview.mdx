@@ -1,7 +1,7 @@
 ---
 title: "Active Directory Homelab — Corporate Network Simulation"
 sidebarTitle: "Overview"
-description: "Building a Windows Server 2022 domain controller and Windows 11 client in VMware Workstation Pro, with AD DS, RAS/NAT, DHCP, and bulk user provisioning."
+description: "Building a Windows Server 2022 domain controller, a pfSense router, and a Windows 11 client in VMware Workstation Pro, with AD DS, bulk user provisioning, and dedicated network routing."
 icon: "sitemap"
 ---
 
@@ -14,6 +14,10 @@ This lab is built to do double duty: a realistic Active Directory environment fo
 
   <Card title="Domain Controller" icon="windows">
     Windows Server 2022 Datacenter (Evaluation)
+  </Card>
+
+  <Card title="Router / Firewall" icon="shield-halved">
+    pfSense CE 2.8.1 — routing, DHCP, and firewalling for the isolated lab network
   </Card>
 
   <Card title="Directory" icon="users">
@@ -29,28 +33,30 @@ This lab is built to do double duty: a realistic Active Directory environment fo
 
 ```text
 Host (32GB RAM, VMware Workstation Pro)
- ├─ VMnet1 (host-only, 192.168.125.0/24, DHCP off)
- │    └─ DC01 — Windows Server 2022 Datacenter, static 192.168.125.10
- ├─ VMnet8 (NAT — VMware-managed, not DC-based)
- │    └─ internet access for updates/activation
- └─ Kali attacker VM (existing box, being wired onto VMnet1)
+ ├─ VMnet1 (host-only, 192.168.125.0/24)
+ │    ├─ pfSense CE — LAN 192.168.125.254 (router, DHCP, firewall for the lab network)
+ │    ├─ DC01 — Windows Server 2022 Datacenter, static 192.168.125.10
+ │    ├─ CLIENT01 — Windows 11, static 192.168.125.20, joined to corp.lab
+ │    └─ Kali attacker VM (existing box, being wired onto VMnet1)
+ └─ VMnet8 (NAT — VMware-managed)
+      └─ pfSense's WAN interface only — internet access for the whole lab network
 
 DC01 roles: AD DS + DNS
 Domain: corp.lab (new forest)
 ```
 
-Unlike a design where the domain controller itself runs Routing and Remote Access with NAT, this lab lets VMware handle NAT and isolation directly — a host-only virtual network (`VMnet1`) carries all domain traffic with static IPs and no DHCP, while a separate VMware-managed NAT network (`VMnet8`) gives each VM internet access independently. Simpler to reason about, and one less role to misconfigure.
+pfSense CE now owns routing, DHCP, and firewalling for the entire lab network — replacing an earlier design where every VM carried its own NAT adapter alongside a static IP on the isolated network. That per-VM setup worked at first but proved fragile (a static IP silently reverting to DHCP was the final straw), so the lab now routes through a single dedicated router VM instead, the same way a real network would. See [Architecture](/projects/ad-homelab/architecture) for the full reasoning.
 
 ## Build Phases
 
 <Steps>
   <Step title="Architecture">
-    The VMware networking design — host-only isolation vs. NAT, static addressing, and how the OU/department structure is laid out.
+    The VMware networking design — pfSense as router/DHCP/firewall for the isolated network, static addressing, and how the OU/department structure is laid out.
 
     → [Network & Directory Architecture](/projects/ad-homelab/architecture)
   </Step>
   <Step title="Build">
-    Provisioning the domain controller VM, configuring the host-only network, installing AD DS, and promoting the machine to create the `corp.lab` forest.
+    Provisioning the domain controller, standing up pfSense as the lab's router, building the Windows 11 client, and joining it to the `corp.lab` domain.
 
     → [Building the Domain Controller](/projects/ad-homelab/build)
   </Step>
@@ -60,7 +66,7 @@ Unlike a design where the domain controller itself runs Routing and Remote Acces
     → [OU Structure & Bulk Provisioning](/projects/ad-homelab/configuration)
   </Step>
   <Step title="Validation & Next Steps">
-    What's been verified so far, and what's still queued — GPOs, client join, and the first attack/detection scenario.
+    What's been verified so far, and what's still queued — GPOs, security telemetry, and the first attack/detection scenario.
 
     → [Status & Next Steps](/projects/ad-homelab/validation)
   </Step>
@@ -70,6 +76,9 @@ Unlike a design where the domain controller itself runs Routing and Remote Acces
 
 - Active Directory Domain Services installation and forest/domain creation
 - VMware Workstation networking — host-only isolation, static addressing, virtual network editor configuration
+- Standing up and configuring a dedicated router/firewall (pfSense CE) — interface assignment, DHCP scoping, and re-pointing existing VMs at a new gateway
+- Windows 11 client provisioning, including a local-account-only setup (no Microsoft account) to keep the machine clean for later forensics work
+- Domain join troubleshooting: diagnosing a static IP silently reverting to DHCP/APIPA, clearing a stale IP binding, and telling networking failures apart from AD failures
 - OU design and department-based security group structure, built via PowerShell rather than clicking through ADUC
 - Bulk user provisioning at scale (1,050 accounts) from a CSV, including idempotent re-runs and progress reporting
 - Real deployment troubleshooting: PowerShell execution policy, file corruption across a network share, and rewriting scripts to avoid fragile syntax (backtick line-continuations) under real-world copy conditions
