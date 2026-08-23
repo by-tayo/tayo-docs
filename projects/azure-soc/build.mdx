@@ -12,6 +12,10 @@ This phase stands up the Azure side of the lab and then deliberately removes its
     Create a resource group to hold every service in the lab: the virtual machine, virtual network, Log Analytics workspace, and Sentinel.
 
     Keeping everything in one group is what makes teardown a single operation later — which matters more than usual here, since leaving this lab running means leaving an exposed machine on the internet.
+
+    <Frame caption="All lab services collected in a single resource group">
+      ![Azure resource group listing the SOC lab resources](https://raw.githubusercontent.com/by-tayo/azure-soclab/main/images/soc_lab_res.png)
+    </Frame>
   </Step>
   <Step title="Deploy the Windows 10 VM and virtual network">
     Create the Windows 10 virtual machine. Azure provisions an accompanying virtual network and network security group alongside it.
@@ -22,6 +26,10 @@ This phase stands up the Azure side of the lab and then deliberately removes its
     Edit the network security group attached to the VM and configure it to allow any port inbound.
 
     This is the first of the two exposure steps. It removes Azure's edge filtering, so traffic on every port reaches the machine rather than being dropped before it arrives.
+
+    <Frame caption="Network security group rule allowing all inbound traffic">
+      ![Azure network security group inbound rule permitting any port](https://raw.githubusercontent.com/by-tayo/azure-soclab/main/images/net_sec_group.png)
+    </Frame>
   </Step>
   <Step title="Connect over RDP">
     Connect to the VM over RDP using the credentials from deployment. This confirms the machine is reachable and gives you a session to complete the guest-side configuration.
@@ -30,6 +38,10 @@ This phase stands up the Azure side of the lab and then deliberately removes its
     Inside the VM, open the Windows Defender Firewall settings and turn the firewall off.
 
     This is the second exposure step, and the one people forget. With the NSG open but the host firewall still running, packets arrive at the machine and are dropped by the guest — producing a honeypot that looks deployed but records almost nothing.
+
+    <Frame caption="Windows Defender Firewall turned off on the honeypot">
+      ![Windows Defender Firewall settings showing the firewall disabled](https://raw.githubusercontent.com/by-tayo/azure-soclab/main/images/firewall_settings.png)
+    </Frame>
   </Step>
 </Steps>
 
