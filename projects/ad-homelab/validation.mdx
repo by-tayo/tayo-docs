@@ -20,13 +20,13 @@ This lab is a work in progress rather than a finished build. This page tracks wh
 | Client join | `CLIENT01` (Windows 11, local-account-only) built, given a static IP, and joined to `corp.lab` — confirmed via System Properties showing `Domain: corp.lab` and the computer object appearing in ADUC's default `Computers` container |
 | Client hostname aligned with lab naming | `CLIENT01` renamed from its Windows-assigned default (`DESKTOP-HNA8DUJ`) to `CLIENT01` — confirmed as the reporting `host` value in Splunk after the rename |
 | Security telemetry pipeline | Sysmon (SwiftOnSecurity config) deployed on DC01 and `CLIENT01`, Splunk Universal Forwarder installed on both, indexed by Splunk Enterprise on LOGSRV — verified end-to-end with `index=main \| stats count by host` (4,393\+ events from DC01, 318\+ from `CLIENT01`, 1,962 of them Sysmon process-creation events) |
+| GPO — Interactive logon banner | Linked to `CLIENT01`'s OU, banner text confirmed showing on the Windows sign-in screen after `gpupdate /force` and a reboot |
+| GPO — Desktop wallpaper via UNC | `\\DC01\Wallpaper` share applied through a User Configuration policy with **Loopback Processing (Merge mode)** enabled so it applies on the Computers OU — `gpresult /r` on `CLIENT01` confirms the policy is being applied |
+| GPO — Prohibit access to Control Panel and PC Settings | Restriction confirmed by the **Restrictions** block dialog popping up when opening Control Panel or Settings on `CLIENT01` |
 
 ## In Progress / Queued
 
 <Steps>
-  <Step title="GPOs">
-    At least 2–3 Group Policy Objects that do something observable — a password policy, a desktop restriction, a mapped drive — applied and confirmed on `CLIENT01` via `gpupdate /force`.
-  </Step>
   <Step title="Attacker tooling">
     The existing Kali VM wired onto `VMnet1` with a single network adapter (now that pfSense handles NAT for the whole network), BloodHound collection run against the domain, and a first attack/detection scenario (Kerberoasting or password spray) run and documented end to end — with Splunk on LOGSRV now in place to catch the detection side.
   </Step>
