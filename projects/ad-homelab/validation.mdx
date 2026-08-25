@@ -18,6 +18,8 @@ This lab is a work in progress rather than a finished build. This page tracks wh
 | Bulk user provisioning | 1,050 accounts created, 0 skipped, verified via `Get-ADUser -Filter * -SearchBase 'OU=Corp,DC=corp,DC=lab' \| Measure-Object` |
 | Help-desk delegation | `Reset user passwords` permission delegated to the `Helpdesk` group on the `IT` OU |
 | Client join | `CLIENT01` (Windows 11, local-account-only) built, given a static IP, and joined to `corp.lab` — confirmed via System Properties showing `Domain: corp.lab` and the computer object appearing in ADUC's default `Computers` container |
+| Client hostname aligned with lab naming | `CLIENT01` renamed from its Windows-assigned default (`DESKTOP-HNA8DUJ`) to `CLIENT01` — confirmed as the reporting `host` value in Splunk after the rename |
+| Security telemetry pipeline | Sysmon (SwiftOnSecurity config) deployed on DC01 and `CLIENT01`, Splunk Universal Forwarder installed on both, indexed by Splunk Enterprise on LOGSRV — verified end-to-end with `index=main \| stats count by host` (4,393\+ events from DC01, 318\+ from `CLIENT01`, 1,962 of them Sysmon process-creation events) |
 
 ## In Progress / Queued
 
@@ -25,16 +27,13 @@ This lab is a work in progress rather than a finished build. This page tracks wh
   <Step title="GPOs">
     At least 2–3 Group Policy Objects that do something observable — a password policy, a desktop restriction, a mapped drive — applied and confirmed on `CLIENT01` via `gpupdate /force`.
   </Step>
-  <Step title="Security telemetry">
-    Sysmon deployed to DC01 and `CLIENT01`, forwarding to a log server (Splunk or Wazuh) for the blue-team half of the lab.
-  </Step>
   <Step title="Attacker tooling">
-    The existing Kali VM wired onto `VMnet1` with a single network adapter (now that pfSense handles NAT for the whole network), BloodHound collection run against the domain, and a first attack/detection scenario (Kerberoasting or password spray) run and documented end to end.
+    The existing Kali VM wired onto `VMnet1` with a single network adapter (now that pfSense handles NAT for the whole network), BloodHound collection run against the domain, and a first attack/detection scenario (Kerberoasting or password spray) run and documented end to end — with Splunk on LOGSRV now in place to catch the detection side.
   </Step>
 </Steps>
 
 <Note>
-  A couple of small loose ends from the pfSense migration: confirming the now-redundant `VMnet8` NAT adapters are fully removed from DC01 and `CLIENT01` (not just disconnected), and optionally renaming `CLIENT01`'s default `DESKTOP-XXXXXXX` hostname to something that matches the rest of the lab's naming.
+  One small loose end from the pfSense migration: confirming the now-redundant `VMnet8` NAT adapters are fully removed from DC01 and `CLIENT01` (not just disconnected).
 </Note>
 
 ## Why This Page Reads Like a Checklist

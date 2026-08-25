@@ -137,6 +137,10 @@ Once pfSense was routing, both existing VMs needed to drop their old per-VM NAT 
 <Steps>
   <Step title="Provision the VM">
     New VM: Custom (advanced) configuration, 2 vCPU, 4GB RAM, 60GB disk, one network adapter set to **Custom → VMnet1**. Guest OS set to Windows 11, which makes VMware auto-add and encrypt a virtual TPM 2.0 — required for Windows 11 setup. **Windows 11 Pro** was used, since Home cannot join a domain.
+
+    <Frame caption="CLIENT01 desktop after Windows 11 Pro setup completes">
+      ![Windows 11 desktop on the freshly provisioned CLIENT01 VM](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/images/windows_11_client.png)
+    </Frame>
   </Step>
   <Step title="Local account only, no Microsoft sign-in">
     To keep CLIENT01 as a clean local-admin baseline — useful later for network/malware forensics work — rather than tying it to a Microsoft account, the OOBE network/sign-in requirement was bypassed: `Shift+F10` during setup for a command prompt, then `start ms-cxh:localonly` to drop straight into a local-account flow. (The registry fallback — `reg add HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\OOBE /v BypassNRO /t REG_DWORD /d 1 /f` followed by a reboot — also works if that shortcut changes in a future Windows build.)
@@ -151,6 +155,133 @@ Once pfSense was routing, both existing VMs needed to drop their old per-VM NAT 
 
 Confirmed via **System Properties** showing `Domain: corp.lab`, and via **Active Directory Users and Computers** on DC01 showing the new computer object in the default `Computers` container.
 
+<Frame caption="System Properties on CLIENT01 showing Domain: corp.lab after the join">
+  ![CLIENT01 System Properties confirming membership in the corp.lab domain](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/images/verify_domain.png)
+</Frame>
+
+## Building LOGSRV and Installing Splunk
+
+With the domain and client in place, the next phase stood up a dedicated log server (`LOGSRV`) and wired Sysmon \+ the Splunk Universal Forwarder into DC01 and `CLIENT01` so every event flowing off those machines lands in one indexed, searchable place.
+
+<Steps>
+  <Step title="Provision LOGSRV">
+    New VM: 2 vCPU, 4GB RAM, single `Custom → VMnet1` adapter. Installed **Ubuntu Server 26.04 LTS** and set a static IP of `192.168.125.30`, subnet `255.255.255.0`, gateway `192.168.125.254` (pfSense), DNS `192.168.125.10` (DC01) — same pattern as every other lab VM.
+  </Step>
+  <Step title="Install Splunk Enterprise">
+    Downloaded the `.deb` for Splunk Enterprise, installed it, accepted the license on first launch, and set it to auto-start on boot:
+
+    ```bash
+    sudo dpkg -i splunk-*.deb
+    sudo /opt/splunk/bin/splunk start --accept-license
+    sudo /opt/splunk/bin/splunk enable boot-start
+    ```
+
+    Opened the receiving port for forwarders on `9997`:
+
+    ```bash
+    sudo /opt/splunk/bin/splunk enable listen 9997 -auth admin:<password>
+    ```
+
+    Confirmed the web UI came up on `http://192.168.125.30:8000` and logged in successfully.
+
+    <Frame caption="Splunk Enterprise web UI on LOGSRV">
+      ![Splunk Enterprise home screen after login on LOGSRV](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/images/splunk-home.png)
+    </Frame>
+  </Step>
+  <Step title="Deploy Sysmon on DC01 and CLIENT01">
+    Downloaded [Sysmon](https://learn.microsoft.com/en-us/sysinternals/downloads/sysmon) and the [SwiftOnSecurity `sysmon-config`](https://github.com/SwiftOnSecurity/sysmon-config) ruleset onto each machine, then installed from an elevated prompt:
+
+    ```powershell
+    .\Sysmon64.exe -accepteula -i sysmonconfig-export.xml
+    ```
+
+    Verified events were being generated under **Event Viewer → Applications and Services Logs → Microsoft → Windows → Sysmon → Operational** — Event ID `1` (process creation) and Event ID `22` (DNS query) both showing up as expected.
+
+    <Frame caption="Sysmon Operational log in Event Viewer on DC01">
+      ![Event Viewer showing the Sysmon Operational channel with process-creation and DNS-query events](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/images/Eventviewer.png)
+    </Frame>
+  </Step>
+  <Step title="Install the Splunk Universal Forwarder on DC01 and CLIENT01">
+    Installed silently via `msiexec`, pointing `RECEIVING_INDEXER` at LOGSRV on port `9997`:
+
+    ```powershell
+    msiexec /i splunkforwarder-<version>-x64-release.msi ^
+      RECEIVING_INDEXER="192.168.125.30:9997" ^
+      LAUNCHSPLUNK=1 AGREETOLICENSE=Yes /quiet
+    ```
+
+    Added a custom `inputs.conf` stanza on each host to forward the Sysmon Operational channel specifically (not just the default Security/System/Application logs):
+
+    ```ini inputs.conf
+    [WinEventLog://Microsoft-Windows-Sysmon/Operational]
+    disabled = 0
+    renderXml = true
+    index = main
+    ```
+
+    Restarted the `SplunkForwarder` service on each host to pick up the config.
+  </Step>
+  <Step title="Rename CLIENT01 to match the lab's naming">
+    Renamed the client from its Windows-assigned default (`DESKTOP-HNA8DUJ`) to `CLIENT01` so the reporting host name in Splunk matches the rest of the lab:
+
+    ```powershell
+    Rename-Computer -NewName CLIENT01 -DomainCredential CORP\Administrator -Restart
+    ```
+
+    After the reboot, Splunk started reporting new events under `host="CLIENT01"` instead of the old default.
+  </Step>
+  <Step title="Verify the end-to-end pipeline in Splunk">
+    From Splunk's search UI, ran:
+
+    ```spl
+    index=main | stats count by host
+    ```
+
+    Result: DC01 reporting 4,393\+ events, `CLIENT01` reporting 318\+ events (plus a residual chunk under the pre-rename `DESKTOP-HNA8DUJ` from before the rename). Filtering on Sysmon specifically:
+
+    ```spl
+    index=main sourcetype="XmlWinEventLog:Microsoft-Windows-Sysmon/Operational"
+    ```
+
+    confirmed 1,962 Sysmon process-creation events from DC01 alone — the full Sysmon → Universal Forwarder → Splunk pipeline is working end to end.
+
+    <Frame caption="Splunk: stats count by host — DC01, CLIENT01, and the pre-rename DESKTOP-HNA8DUJ">
+      ![Splunk search results grouping events by host, showing DC01 and CLIENT01 reporting](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/images/splunk-hosts.png)
+    </Frame>
+
+    <Frame caption="Splunk: Sysmon events indexed from DC01">
+      ![Splunk search results for Sysmon Operational events sourced from DC01](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/images/splunk-events.png)
+    </Frame>
+  </Step>
+</Steps>
+
+<Warning>
+  Splunk will silently stop indexing and searching when its disk fills up, and the default Ubuntu Server install can leave you closer to that line than you'd expect. On this build, the installer only allocated ~19GB to the LVM root volume and left the rest of the 40GB disk unassigned — Splunk quietly hit the wall and stopped returning search results with no obvious error in the UI.
+
+  Check free space first (`df -h /`) and, if the root LV is small, extend it into the free space in the volume group:
+
+  ```bash
+  sudo lvextend -l +100%FREE /dev/mapper/ubuntu--vg-ubuntu--lv
+  sudo resize2fs /dev/mapper/ubuntu--vg-ubuntu--lv
+  ```
+
+  Same tone of "silent misbehavior with a boring root cause" as the earlier pfSense stale-IP issue — worth doing up front on any Ubuntu VM that's going to hold indexed log data.
+</Warning>
+
+<Tip>
+  On `CLIENT01` the Universal Forwarder installer didn't drop an `outputs.conf` under `C:\Program Files\SplunkUniversalForwarder\etc\system\local\` on the first try, so the forwarder was running with no receiver configured and nothing was showing up in Splunk. Creating it manually with the same `RECEIVING_INDEXER` value fixed it:
+
+  ```ini outputs.conf
+  [tcpout]
+  defaultGroup = default-autolb-group
+  
+  [tcpout:default-autolb-group]
+  server = 192.168.125.30:9997
+  
+  [tcpout-server://192.168.125.30:9997]
+  ```
+</Tip>
+
 ## What Comes Next
 
-At this point the domain and network are both up, and the client is joined. Still ahead: writing GPOs that do something observable, deploying security telemetry, and wiring in the attacker VM — tracked on [Status & Next Steps](/projects/ad-homelab/validation). The bulk-provisioning phase that populated the directory with 1,050 users is covered separately in [OU Structure & Bulk Provisioning](/projects/ad-homelab/configuration).
+At this point the domain, network, client, and security-telemetry pipeline are all up. Still ahead: writing GPOs that do something observable, and wiring in the attacker VM for a first end-to-end attack/detection scenario now that Splunk is in place to catch the blue-team side — tracked on [Status & Next Steps](/projects/ad-homelab/validation). The bulk-provisioning phase that populated the directory with 1,050 users is covered separately in [OU Structure & Bulk Provisioning](/projects/ad-homelab/configuration).

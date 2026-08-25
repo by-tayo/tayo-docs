@@ -58,6 +58,10 @@ New-ADGroup -Name "Helpdesk" -GroupScope Global -GroupCategory Security -Path $t
 
 Run with `.\setup-ou-structure.ps1` — it's idempotent, so re-running it after adding a department to the list only creates what's missing.
 
+<Frame caption="Running setup-ou-structure.ps1 in PowerShell on DC01">
+  ![PowerShell session on DC01 executing the OU-structure setup script](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/images/powershell_script.png)
+</Frame>
+
 <Frame caption="The resulting OU tree in Active Directory Users and Computers — Corp with all eight department OUs">
   ![Active Directory Users and Computers showing the Corp OU expanded with eight department OUs](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/adds_ou_structure.png)
 </Frame>

@@ -23,13 +23,15 @@ The network went through one real redesign. It originally had every lab VM carry
 
 ```text
 pfSense (LAN)      192.168.125.254   (VMnet1, static)  +  WAN adapter (VMnet8, DHCP)
-DC01               192.168.125.10    (VMnet1, static)
-CLIENT01           192.168.125.20    (VMnet1, static)
-LOGSRV *           192.168.125.30    (VMnet1, static)
+DC01               192.168.125.10    (VMnet1, static)  → forwards Windows + Sysmon logs to LOGSRV:9997
+CLIENT01           192.168.125.20    (VMnet1, static)  → forwards Windows + Sysmon logs to LOGSRV:9997
+LOGSRV             192.168.125.30    (VMnet1, static)  — Ubuntu Server 26.04 LTS, Splunk Enterprise, receiving on 9997
 ATTACKER (Kali) *  192.168.125.40    (VMnet1, static)
 
 * planned, not yet built
 ```
+
+LOGSRV is fully built and actively indexing forwarded events. DC01 and `CLIENT01` each run Sysmon (SwiftOnSecurity config) plus the Splunk Universal Forwarder, sending Windows Event Logs and the Sysmon Operational channel to Splunk on `LOGSRV:9997`.
 
 <Tip>
   `.1` on `VMnet1` is already claimed by the host machine's own virtual adapter, which VMware creates automatically for host-only networks — that's why pfSense's LAN interface sits at `.254` instead of the more conventional `.1`. DHCP is enabled on pfSense's LAN interface with a scope reserved for future/ad-hoc VMs (`192.168.125.100`–`199`), but the core domain machines keep static IPs assigned by hand for predictability.
