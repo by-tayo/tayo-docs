@@ -282,6 +282,97 @@ With the domain and client in place, the next phase stood up a dedicated log ser
   ```
 </Tip>
 
+## Standing Up Kali and BloodHound CE
+
+With the domain, client, GPOs, and telemetry pipeline all in place, the next phase brings in the attacker side of the lab. An existing Kali VM was wired into `VMnet1` alongside the rest of the lab, and BloodHound Community Edition was installed on it to enumerate the domain remotely and map out attack paths.
+
+<Steps>
+  <Step title="Wire the Kali VM into the lab network">
+    Existing Kali VM already provisioned — reconfigured its single network adapter to **Custom → VMnet1** so it sits on the same host-only network as DC01, `CLIENT01`, and LOGSRV. Left it on DHCP; pfSense handed out `192.168.125.101` from the reserved DHCP scope.
+
+    Verified basic connectivity from Kali:
+
+    ```bash
+    ping -c 3 192.168.125.254   # pfSense gateway
+    ping -c 3 8.8.8.8            # internet through pfSense NAT
+    nslookup corp.lab 192.168.125.10   # DNS resolution through DC01
+    ```
+
+    All three came back clean — pfSense is routing Kali's traffic, and DC01 is answering domain DNS queries.
+  </Step>
+  <Step title="Install BloodHound Community Edition via Docker">
+    BloodHound CE ships as a Docker Compose stack, which keeps the app, Postgres app database, and Neo4j graph database bundled together with matching versions rather than installed individually on Kali.
+
+    ```bash
+    sudo apt update
+    sudo apt install -y docker.io docker-compose
+    sudo systemctl enable --now docker
+    
+    curl -L https://ghst.ly/getbhce -o docker-compose.yml
+    sudo docker-compose up -d
+    ```
+
+    Three containers come up: `app-db` (Postgres), `graph-db` (Neo4j), and the BloodHound app itself. Confirmed the web UI at `http://localhost:8080` and logged in.
+
+    <Frame caption="BloodHound Community Edition Explore page after login">
+      ![BloodHound CE web UI showing the Explore page](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/images/bloodhound%20ui.png)
+    </Frame>
+  </Step>
+  <Step title="Enumerate the domain with bloodhound-ce-python">
+    Ran the Python-based BloodHound CE collector remotely over LDAP — no foothold on a domain machine required, just valid low-privilege credentials for `jsmith` (one of the 1,050 users bulk-provisioned earlier):
+
+    ```bash
+    bloodhound-ce-python \
+      -d corp.lab \
+      -dc DC01.corp.lab \
+      -ns 192.168.125.10 \
+      -u jsmith \
+      -p '<password>' \
+      -c All \
+      --zip
+    ```
+
+    Result: **1,030 users, 61 groups, 5 GPOs, 34 OUs, 19 containers, 2 computers** (DC01 \+ `CLIENT01`), 0 trusts, written into a single `.zip` for upload.
+  </Step>
+  <Step title="Upload into BloodHound">
+    In the BloodHound web UI → **Administration → Quick Upload**, dropped the collector's `.zip`. Every data file (computers, users, containers, domains, GPOs, groups) processed successfully and the graph populated on the Explore page.
+
+    <Frame caption="Uploading the collector .zip into BloodHound's Quick Upload">
+      ![BloodHound Quick Upload dialog with the collector zip attached](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/images/connecttozip.png)
+    </Frame>
+
+    <Frame caption="BloodHound analyzing the uploaded zip — all data files processed">
+      ![BloodHound processing the uploaded computers, users, containers, domains, GPOs, and groups files](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/images/analyzing%20zip.png)
+    </Frame>
+  </Step>
+  <Step title="Run a first attack-path check">
+    Two initial checks from BloodHound's Cypher query pane:
+
+    ```cypher
+    // Any privilege-escalation path from jsmith to Domain Admins?
+    MATCH p = shortestPath((u:User {name:"JSMITH@CORP.LAB"})-[*1..]->(g:Group {name:"DOMAIN ADMINS@CORP.LAB"}))
+    RETURN p
+    ```
+
+    Result: **no path found** — a legitimate and expected finding at this stage, since no ACL misconfigurations have been deliberately introduced yet.
+
+    ```cypher
+    // Any Kerberoastable accounts (service accounts with an SPN set)?
+    MATCH (u:User {hasspn:true}) RETURN u.name
+    ```
+
+    Result: **none** — every domain user in the lab is a plain account with no Service Principal Name registered.
+
+    <Frame caption="BloodHound graph view of the enumerated corp.lab directory">
+      ![BloodHound showing nodes and connections across corp.lab after the initial pathfinding query](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/images/connections%20bd.png)
+    </Frame>
+  </Step>
+</Steps>
+
+<Note>
+  Getting "no path" and "no Kerberoastable accounts" back on a freshly provisioned directory is the correct baseline, not a broken setup — it's what a well-configured, plain-vanilla AD environment should look like from an attacker's perspective. The next step is deliberately introducing one realistic misconfiguration: a service account (`svc_sql`) with an SPN registered and a weak, dictionary-crackable password, then running a real Kerberoasting attack against it end to end and verifying the ticket request lands in Splunk as Windows Security Event ID `4769` on DC01. Tracked on [Status & Next Steps](/projects/ad-homelab/validation).
+</Note>
+
 ## What Comes Next
 
-At this point the domain, network, client, and security-telemetry pipeline are all up. Still ahead: writing GPOs that do something observable, and wiring in the attacker VM for a first end-to-end attack/detection scenario now that Splunk is in place to catch the blue-team side — tracked on [Status & Next Steps](/projects/ad-homelab/validation). The bulk-provisioning phase that populated the directory with 1,050 users is covered separately in [OU Structure & Bulk Provisioning](/projects/ad-homelab/configuration).
+At this point the domain, network, client, GPOs, telemetry pipeline, and attacker VM are all in place, and BloodHound has confirmed the baseline directory has no obvious privilege-escalation paths. Still ahead: introducing a deliberately vulnerable service account, running a real Kerberoasting attack from Kali, and verifying the ticket request shows up in Splunk as Windows Security Event ID `4769` on DC01 — tracked on [Status & Next Steps](/projects/ad-homelab/validation). The bulk-provisioning phase that populated the directory with 1,050 users is covered separately in [OU Structure & Bulk Provisioning](/projects/ad-homelab/configuration).

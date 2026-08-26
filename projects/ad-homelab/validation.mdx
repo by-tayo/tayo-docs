@@ -23,12 +23,16 @@ This lab is a work in progress rather than a finished build. This page tracks wh
 | GPO — Interactive logon banner | Linked to `CLIENT01`'s OU, banner text confirmed showing on the Windows sign-in screen after `gpupdate /force` and a reboot |
 | GPO — Desktop wallpaper via UNC | `\\DC01\Wallpaper` share applied through a User Configuration policy with **Loopback Processing (Merge mode)** enabled so it applies on the Computers OU — `gpresult /r` on `CLIENT01` confirms the policy is being applied |
 | GPO — Prohibit access to Control Panel and PC Settings | Restriction confirmed by the **Restrictions** block dialog popping up when opening Control Panel or Settings on `CLIENT01` |
+| Kali attacker VM on the lab network | Existing Kali VM re-homed onto `VMnet1`, DHCP address `192.168.125.101` from pfSense — connectivity to the gateway, the internet, and `nslookup corp.lab` against DC01 all confirmed |
+| BloodHound CE installed on Kali | BloodHound Community Edition deployed via Docker Compose (Postgres app-db, Neo4j graph-db, and the BloodHound app), web UI reachable at `http://localhost:8080` |
+| Domain enumeration with BloodHound | `bloodhound-ce-python` run remotely over LDAP as `jsmith` — collected 1,030 users, 61 groups, 5 GPOs, 34 OUs, 19 containers, 2 computers (DC01 \+ `CLIENT01`), 0 trusts; `.zip` uploaded into BloodHound and processed successfully |
+| Baseline attack-path check | Cypher shortest-path query from `jsmith` to `Domain Admins` returns **no path**; `MATCH (u:User {hasspn:true})` returns **none** — the expected clean baseline before any misconfiguration is introduced |
 
 ## In Progress / Queued
 
 <Steps>
-  <Step title="Attacker tooling">
-    The existing Kali VM wired onto `VMnet1` with a single network adapter (now that pfSense handles NAT for the whole network), BloodHound collection run against the domain, and a first attack/detection scenario (Kerberoasting or password spray) run and documented end to end — with Splunk on LOGSRV now in place to catch the detection side.
+  <Step title="Attack/detection scenario — Kerberoasting">
+    Create a deliberately vulnerable service account (`svc_sql`) with a Service Principal Name registered and a weak, dictionary-crackable password. From Kali, request its service ticket, extract the crackable hash, and crack it offline with `hashcat`. Verify the ticket request shows up in Splunk as a Windows Security **Event ID 4769** on DC01 — closing the loop between the offensive tooling and the telemetry pipeline built out in the previous phase.
   </Step>
 </Steps>
 

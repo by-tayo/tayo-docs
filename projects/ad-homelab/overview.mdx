@@ -38,7 +38,7 @@ Host (32GB RAM, VMware Workstation Pro)
  │    ├─ DC01 — Windows Server 2022 Datacenter, static 192.168.125.10 (Sysmon + Splunk UF)
  │    ├─ CLIENT01 — Windows 11, static 192.168.125.20, joined to corp.lab (Sysmon + Splunk UF)
  │    ├─ LOGSRV — Ubuntu Server 26.04 LTS, static 192.168.125.30, Splunk Enterprise on :9997
- │    └─ Kali attacker VM (existing box, being wired onto VMnet1)
+ │    └─ Kali attacker VM — DHCP 192.168.125.101, BloodHound CE via Docker
  └─ VMnet8 (NAT — VMware-managed)
       └─ pfSense's WAN interface only — internet access for the whole lab network
 
@@ -72,8 +72,13 @@ pfSense CE now owns routing, DHCP, and firewalling for the entire lab network �
   <Step title="Group Policy">
     Three observable GPOs applied and confirmed on `CLIENT01` — interactive logon banner, desktop wallpaper via UNC (with Loopback Processing in Merge mode), and a Control Panel / PC Settings restriction. **Complete** — see the [Status & Next Steps](/projects/ad-homelab/validation) page.
   </Step>
+  <Step title="Attack / Detection">
+    Kali attacker VM wired into `VMnet1`, BloodHound Community Edition installed via Docker, and remote domain enumeration run with `bloodhound-ce-python` as a low-privilege user — baseline pathfinding confirms a clean directory with no privilege-escalation shortcuts. **In progress** — Kerberoasting attack against a deliberately vulnerable service account, verified in Splunk via Event ID `4769`, is queued next.
+
+    → [Building the Domain Controller](/projects/ad-homelab/build) · [Status & Next Steps](/projects/ad-homelab/validation)
+  </Step>
   <Step title="Validation & Next Steps">
-    What's been verified so far, and what's still queued — the first attack/detection scenario against the domain.
+    What's been verified so far, and what's still queued — the Kerberoasting attack/detection scenario against the domain.
 
     → [Status & Next Steps](/projects/ad-homelab/validation)
   </Step>
@@ -94,6 +99,7 @@ pfSense CE now owns routing, DHCP, and firewalling for the entire lab network �
 - Sysmon deployment on Windows endpoints using the SwiftOnSecurity ruleset, plus a custom `inputs.conf` stanza on the Splunk Universal Forwarder to ship the Sysmon Operational channel alongside the default Windows logs
 - Linux storage troubleshooting — diagnosing a silent Splunk index/search failure caused by a full LVM root volume and extending it live with `lvextend` \+ `resize2fs`
 - Group Policy authoring and troubleshooting — interactive logon banner, UNC-based desktop wallpaper, and Control Panel / PC Settings restrictions, including using Loopback Processing (Merge mode) to apply User Configuration settings against a Computers OU and verifying with `gpupdate /force` \+ `gpresult /r`
+- Offensive AD enumeration — BloodHound Community Edition deployed on Kali via Docker Compose, `bloodhound-ce-python` collector run remotely over LDAP with low-privilege credentials, and Cypher pathfinding queries used to check for privilege-escalation paths and Kerberoastable accounts
 
 <Note>
   This lab is actively being built. This documentation is updated as each phase completes, so treat later pages as more current than earlier ones.
