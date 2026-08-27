@@ -31,11 +31,12 @@ This lab is a work in progress rather than a finished build. This page tracks wh
 | Kerberoasting attack executed from Kali | `impacket-GetUserSPNs corp.lab/jsmith -dc-ip 192.168.125.10 -request` run as low-privilege `jsmith` — returned the TGS-REP for `svc_sql` in `hashcat` mode `13100` format, no admin rights or domain-machine foothold required |
 | Offline password crack | `rockyou.txt` missed (as expected for a 2009 corpus vs. a newer-style password); a small custom season/year wordlist recovered `Summer2024!` via `hashcat -m 13100` |
 | Attack detected in Splunk | `index=main host=DC01 EventCode=4769 Service_Name=svc_sql` returned the exact ticket request: `Account_Name=jsmith@CORP.LAB`, `Client_Address=192.168.125.101` (Kali), `Ticket_Encryption_Type=0x17` (RC4) — full offense-to-detection loop closed on the existing Sysmon \+ Splunk pipeline with no new instrumentation |
+| pfSense migration cleanup | Redundant `VMnet8` NAT adapters fully removed from DC01 and `CLIENT01` (not just disconnected) — both VMs now have a single `VMnet1` adapter, routing exclusively through pfSense |
 
 ## In Progress / Queued
 
 <Note>
-  One small loose end from the pfSense migration: confirming the now-redundant `VMnet8` NAT adapters are fully removed from DC01 and `CLIENT01` (not just disconnected).
+  All planned phases are complete. Future work will be tracked here as new scenarios get added.
 </Note>
 
 ## Why This Page Reads Like a Checklist
