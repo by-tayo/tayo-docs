@@ -370,9 +370,100 @@ With the domain, client, GPOs, and telemetry pipeline all in place, the next pha
 </Steps>
 
 <Note>
-  Getting "no path" and "no Kerberoastable accounts" back on a freshly provisioned directory is the correct baseline, not a broken setup — it's what a well-configured, plain-vanilla AD environment should look like from an attacker's perspective. The next step is deliberately introducing one realistic misconfiguration: a service account (`svc_sql`) with an SPN registered and a weak, dictionary-crackable password, then running a real Kerberoasting attack against it end to end and verifying the ticket request lands in Splunk as Windows Security Event ID `4769` on DC01. Tracked on [Status & Next Steps](/projects/ad-homelab/validation).
+  Getting "no path" and "no Kerberoastable accounts" back on a freshly provisioned directory is the correct baseline, not a broken setup — it's what a well-configured, plain-vanilla AD environment should look like from an attacker's perspective. The next section introduces one realistic misconfiguration on purpose (`svc_sql` with an SPN and a weak password), then runs the full Kerberoasting attack against it and verifies the ticket request lands in Splunk on DC01.
 </Note>
+
+## Attack Simulation: Kerberoasting
+
+With the clean-baseline check out of the way, this phase deliberately introduces a common real-world misconfiguration — a service account with a Service Principal Name registered and a weak, dictionary-crackable password — then runs a full Kerberoasting attack against it from Kali using only low-privilege domain credentials, cracks the recovered hash offline with `hashcat`, and verifies the whole thing lands in Splunk as a Windows Security Event ID `4769` on DC01. It closes the loop between the offensive tooling stood up in the previous section and the Sysmon \+ Splunk pipeline built out before that.
+
+<Steps>
+  <Step title="Create the deliberately vulnerable service account">
+    On DC01, provisioned a new service account (`svc_sql`) inside the `IT` OU with a weak, dictionary-style password and registered a Service Principal Name against it:
+
+    ```powershell
+    New-ADUser `
+      -Name "svc_sql" `
+      -SamAccountName "svc_sql" `
+      -UserPrincipalName "svc_sql@corp.lab" `
+      -Path "OU=Users,OU=IT,OU=Corp,DC=corp,DC=lab" `
+      -AccountPassword (ConvertTo-SecureString "Summer2024!" -AsPlainText -Force) `
+      -Enabled $true `
+      -PasswordNeverExpires $true
+    
+    setspn -S MSSQLSvc/dc01.corp.lab:1433 corp.lab\svc_sql
+    ```
+
+    Mirrors the classic real-world pattern: a service account created once for an app (SQL Server, here), a weak password chosen so the DBA can remember it, an SPN registered so Kerberos can hand out tickets for it, and then no one touches it again for years.
+  </Step>
+  <Step title="Run the Kerberoasting attack from Kali">
+    On the Kali VM, installed Impacket and used `impacket-GetUserSPNs` to request a Kerberos service ticket for `svc_sql` with only `jsmith`'s low-privilege domain credentials — no admin rights, no foothold on a domain-joined machine, just a valid user in `corp.lab`:
+
+    ```bash
+    sudo apt install -y impacket-scripts
+    
+    impacket-GetUserSPNs corp.lab/jsmith \
+      -dc-ip 192.168.125.10 \
+      -request \
+      -outputfile svc_sql.hash
+    ```
+
+    The tool authenticated to DC01, enumerated accounts with an SPN, requested a TGS for `svc_sql`, and wrote the crackable TGS-REP hash out in the format `hashcat` mode `13100` expects.
+
+    <Frame caption="impacket-GetUserSPNs returning the Kerberos TGS-REP hash for svc_sql">
+      ![impacket-GetUserSPNs output showing the svc\_sql SPN and extracted Kerberos hash](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/images/impacket.png)
+    </Frame>
+
+    <Frame caption="TGS-REP hash written to svc_sql.hash, ready for hashcat">
+      ![Impacket run showing the hash file being written for offline cracking](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/images/impacket2.png)
+    </Frame>
+  </Step>
+  <Step title="Crack the hash offline with hashcat">
+    First attempt used Kali's built-in `rockyou.txt` wordlist — a real password-breach corpus from 2009 — and, as expected for a newer-style password, no hits:
+
+    ```bash
+    hashcat -m 13100 svc_sql.hash /usr/share/wordlists/rockyou.txt
+    ```
+
+    Built a small custom wordlist covering common season/year patterns (`Summer2024!`, `Winter2024!`, etc.), re-ran `hashcat`, and recovered the plaintext:
+
+    ```bash
+    hashcat -m 13100 svc_sql.hash custom.txt --force
+    # Status.....: Cracked
+    # $krb5tgs$23$*svc_sql$CORP.LAB$MSSQLSvc/dc01.corp.lab~1433*...:Summer2024!
+    ```
+
+    <Frame caption="hashcat cracking the svc_sql TGS-REP hash and recovering Summer2024!">
+      ![hashcat output showing the cracked svc\_sql password Summer2024!](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/images/hashcat.png)
+    </Frame>
+
+    The two-wordlist arc is worth calling out on purpose: `rockyou` is a real breach corpus, not a toy wordlist, and it still misses this password — which is exactly how offline cracking actually goes. Attackers don't run one list and quit; they iterate with targeted wordlists and rules until something hits.
+  </Step>
+  <Step title="Verify the attack in Splunk on DC01">
+    Back on LOGSRV, searched Splunk for the ticket-request event the attack should have generated:
+
+    ```spl
+    index=main host=DC01 EventCode=4769 Service_Name=svc_sql
+    ```
+
+    A single Windows Security Event ID `4769` came back with all three forensic details lined up:
+
+    - **`Account_Name`** — `jsmith@CORP.LAB` (the account whose credentials Kali used, i.e. the attacker's foothold)
+    - **`Client_Address`** — the Kali VM's DHCP address, `192.168.125.101`
+    - **`Ticket_Encryption_Type`** — `0x17` (RC4), a well-known Kerberoasting indicator because modern AD normally negotiates AES for service tickets, and legitimate services rarely fall back to RC4
+
+    <Frame caption="Splunk Event ID 4769 on DC01 — svc_sql service ticket, jsmith requester, Kali source IP, RC4 encryption">
+      ![Splunk event detail for the 4769 Kerberos service ticket request tied to svc\_sql](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/images/splunk-events.png)
+    </Frame>
+
+    No new instrumentation was added for this — the same Sysmon \+ Splunk Universal Forwarder pipeline built in the earlier telemetry phase caught the attack the moment it happened.
+  </Step>
+</Steps>
+
+<Tip>
+  **Key takeaway.** Service accounts are one of the most durable weak points in Active Directory. Any authenticated domain user can request a Kerberos ticket for any SPN-registered account, so the account's password strength is the entire defense — offline cracking is unlimited by lockout policy. In production, that means service account passwords need to be long (25\+ characters), random, and rotated — the opposite of the deliberately weak `Summer2024!` used here. Group Managed Service Accounts (gMSAs) solve this at the platform level by handling rotation automatically.
+</Tip>
 
 ## What Comes Next
 
-At this point the domain, network, client, GPOs, telemetry pipeline, and attacker VM are all in place, and BloodHound has confirmed the baseline directory has no obvious privilege-escalation paths. Still ahead: introducing a deliberately vulnerable service account, running a real Kerberoasting attack from Kali, and verifying the ticket request shows up in Splunk as Windows Security Event ID `4769` on DC01 — tracked on [Status & Next Steps](/projects/ad-homelab/validation). The bulk-provisioning phase that populated the directory with 1,050 users is covered separately in [OU Structure & Bulk Provisioning](/projects/ad-homelab/configuration).
+The domain, network, client, GPOs, telemetry pipeline, attacker VM, and a full offensive-plus-detection scenario are all in place: a Kerberoasting attack was executed end to end against `svc_sql` and caught by the existing Splunk pipeline as Event ID `4769` on DC01. The bulk-provisioning phase that populated the directory with 1,050 users is covered separately in [OU Structure & Bulk Provisioning](/projects/ad-homelab/configuration); the current lab status and remaining loose ends are tracked on [Status & Next Steps](/projects/ad-homelab/validation).

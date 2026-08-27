@@ -73,12 +73,12 @@ pfSense CE now owns routing, DHCP, and firewalling for the entire lab network �
     Three observable GPOs applied and confirmed on `CLIENT01` — interactive logon banner, desktop wallpaper via UNC (with Loopback Processing in Merge mode), and a Control Panel / PC Settings restriction. **Complete** — see the [Status & Next Steps](/projects/ad-homelab/validation) page.
   </Step>
   <Step title="Attack / Detection">
-    Kali attacker VM wired into `VMnet1`, BloodHound Community Edition installed via Docker, and remote domain enumeration run with `bloodhound-ce-python` as a low-privilege user — baseline pathfinding confirms a clean directory with no privilege-escalation shortcuts. **In progress** — Kerberoasting attack against a deliberately vulnerable service account, verified in Splunk via Event ID `4769`, is queued next.
+    Kali attacker VM wired into `VMnet1`, BloodHound Community Edition run remotely as `jsmith` to confirm a clean baseline, then a full Kerberoasting attack executed against a deliberately vulnerable `svc_sql` service account: hash extracted with `impacket-GetUserSPNs`, cracked offline with `hashcat`, and caught in Splunk as Windows Security Event ID `4769` on DC01 with the RC4 ticket-encryption flag and the Kali source IP. **Complete**.
 
     → [Building the Domain Controller](/projects/ad-homelab/build) · [Status & Next Steps](/projects/ad-homelab/validation)
   </Step>
   <Step title="Validation & Next Steps">
-    What's been verified so far, and what's still queued — the Kerberoasting attack/detection scenario against the domain.
+    What's been verified so far, and what remains as small loose ends now that the attack/detection scenario is complete.
 
     → [Status & Next Steps](/projects/ad-homelab/validation)
   </Step>
@@ -100,6 +100,8 @@ pfSense CE now owns routing, DHCP, and firewalling for the entire lab network �
 - Linux storage troubleshooting — diagnosing a silent Splunk index/search failure caused by a full LVM root volume and extending it live with `lvextend` \+ `resize2fs`
 - Group Policy authoring and troubleshooting — interactive logon banner, UNC-based desktop wallpaper, and Control Panel / PC Settings restrictions, including using Loopback Processing (Merge mode) to apply User Configuration settings against a Computers OU and verifying with `gpupdate /force` \+ `gpresult /r`
 - Offensive AD enumeration — BloodHound Community Edition deployed on Kali via Docker Compose, `bloodhound-ce-python` collector run remotely over LDAP with low-privilege credentials, and Cypher pathfinding queries used to check for privilege-escalation paths and Kerberoastable accounts
+- Kerberoasting (offensive) — deliberately weak `svc_sql` service account with an SPN registered, `impacket-GetUserSPNs` used to extract a TGS-REP hash as a low-privilege domain user, and offline cracking with `hashcat` (mode `13100`) using both `rockyou.txt` and a targeted custom wordlist
+- Kerberos ticket-request detection (defensive) — Windows Security Event ID `4769` on DC01 correlated in Splunk to identify the requesting account, the source IP, and RC4 (`0x17`) ticket encryption as a real-world Kerberoasting indicator, on the same Sysmon \+ Splunk pipeline stood up earlier
 
 <Note>
   This lab is actively being built. This documentation is updated as each phase completes, so treat later pages as more current than earlier ones.

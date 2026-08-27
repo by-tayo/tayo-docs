@@ -27,14 +27,12 @@ This lab is a work in progress rather than a finished build. This page tracks wh
 | BloodHound CE installed on Kali | BloodHound Community Edition deployed via Docker Compose (Postgres app-db, Neo4j graph-db, and the BloodHound app), web UI reachable at `http://localhost:8080` |
 | Domain enumeration with BloodHound | `bloodhound-ce-python` run remotely over LDAP as `jsmith` — collected 1,030 users, 61 groups, 5 GPOs, 34 OUs, 19 containers, 2 computers (DC01 \+ `CLIENT01`), 0 trusts; `.zip` uploaded into BloodHound and processed successfully |
 | Baseline attack-path check | Cypher shortest-path query from `jsmith` to `Domain Admins` returns **no path**; `MATCH (u:User {hasspn:true})` returns **none** — the expected clean baseline before any misconfiguration is introduced |
+| Deliberately vulnerable service account | `svc_sql` created in the `IT` OU with a weak password (`Summer2024!`) and `MSSQLSvc/dc01.corp.lab:1433` registered via `setspn -S` — visible to `bloodhound-ce-python` and to any authenticated domain user |
+| Kerberoasting attack executed from Kali | `impacket-GetUserSPNs corp.lab/jsmith -dc-ip 192.168.125.10 -request` run as low-privilege `jsmith` — returned the TGS-REP for `svc_sql` in `hashcat` mode `13100` format, no admin rights or domain-machine foothold required |
+| Offline password crack | `rockyou.txt` missed (as expected for a 2009 corpus vs. a newer-style password); a small custom season/year wordlist recovered `Summer2024!` via `hashcat -m 13100` |
+| Attack detected in Splunk | `index=main host=DC01 EventCode=4769 Service_Name=svc_sql` returned the exact ticket request: `Account_Name=jsmith@CORP.LAB`, `Client_Address=192.168.125.101` (Kali), `Ticket_Encryption_Type=0x17` (RC4) — full offense-to-detection loop closed on the existing Sysmon \+ Splunk pipeline with no new instrumentation |
 
 ## In Progress / Queued
-
-<Steps>
-  <Step title="Attack/detection scenario — Kerberoasting">
-    Create a deliberately vulnerable service account (`svc_sql`) with a Service Principal Name registered and a weak, dictionary-crackable password. From Kali, request its service ticket, extract the crackable hash, and crack it offline with `hashcat`. Verify the ticket request shows up in Splunk as a Windows Security **Event ID 4769** on DC01 — closing the loop between the offensive tooling and the telemetry pipeline built out in the previous phase.
-  </Step>
-</Steps>
 
 <Note>
   One small loose end from the pfSense migration: confirming the now-redundant `VMnet8` NAT adapters are fully removed from DC01 and `CLIENT01` (not just disconnected).
