@@ -1,0 +1,248 @@
+---
+title: "pfSense OpenVPN — AD-Authenticated Remote Access"
+sidebarTitle: "pfSense OpenVPN"
+description: "Building an AD-backed OpenVPN remote-access VPN on pfSense with LDAP auth, CA-signed certificates, split-tunnel routing, and full SMB verification."
+---
+
+This walkthrough covers building a **remote-access OpenVPN server on pfSense**, authenticated against the existing `corp.lab` Active Directory domain from the [AD Homelab build](/projects/ad-homelab/overview). The goal: connect to the lab from a physical machine completely outside the VMware environment, authenticate with real domain credentials, and prove genuine routed access — not just a green "connected" light.
+
+<Info>
+  Environment: VMware Workstation, pfSense Community Edition 2.8.1. WAN on a NAT-style VMware network (`192.168.182.0/24`), LAN as the existing lab network (`192.168.125.0/24`, DC01 at `.10`, TrueNAS at `.40`).
+</Info>
+
+By the end of this build:
+
+- pfSense authenticates VPN logins against `corp.lab` via LDAP, no local pfSense accounts involved
+- OpenVPN uses a properly CA-signed server certificate and routes clients into the full lab subnet
+- A physical machine outside all VMs connects, authenticates as a real domain user, and reaches DC01, the pfSense LAN UI, and the TrueNAS SMB share
+- The share access itself proves the AD-group ACL is enforced correctly over VPN: an admin account gets denied, the correctly-grouped account does not
+
+Four separate, genuinely non-obvious problems came up along the way. Each is called out below where it happened.
+
+## 1. LDAP authentication server
+
+Before building the VPN, pfSense needs a way to validate `corp.lab` credentials. This is configured under **System → User Manager → Authentication Servers**, pointed at DC01 (`192.168.125.10`) over LDAP.
+
+<Frame caption="The corp.lab AD authentication server, configured and saved.">
+  ![pfSense LDAP authentication server list showing corp.lab AD](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/images/pfsense/01-ldap-auth-server-created.png)
+</Frame>
+
+### Gotcha: bind DN format
+
+Testing the connection (**Diagnostics → Authentication**) with the `Administrator` account initially failed with a generic error.
+
+<Frame caption="Initial LDAP bind test failing against the Administrator account.">
+  ![Authentication test failed error](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/images/pfsense/02-ldap-bind-auth-failed.png)
+</Frame>
+
+Enabling the debug flag and checking **Status → System Logs → System** revealed the real error: `Could not bind to LDAP server corp.lab AD. Please check the bind credentials.` The **Bind username DN** field had been set to a bare `Administrator`, which Active Directory's LDAP bind won't accept. AD needs either a full distinguished name or **UPN format**. Changing the bind DN to `administrator@corp.lab` fixed it immediately.
+
+<Frame caption="LDAP bind succeeding once the bind DN uses UPN format (administrator@corp.lab).">
+  ![Diagnostics Authentication test showing Administrator authenticated successfully](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/images/pfsense/03-ldap-administrator-authenticated.png)
+</Frame>
+
+<Warning>
+  A secondary test with a regular domain user (`aking`) continued to fail at the _user_-bind stage even after the service-account bind succeeded, likely a password/typo issue specific to that account, not a config problem. It was deliberately left unresolved to keep the build moving, since the Administrator test already proved the LDAP mechanism itself works correctly.
+</Warning>
+
+## 2. OpenVPN Remote Access wizard
+
+With LDAP validated, the OpenVPN Wizard (**VPN → OpenVPN → Wizard**) was run selecting **LDAP** as the authentication backend and `corp.lab AD` as the server. Key steps along the way:
+
+**Certificate Authority.** Created a new internal CA (`corp-lab-VPN-CA`) to sign the server certificate.
+
+<Frame caption="Creating the internal CA that will sign the OpenVPN server certificate.">
+  ![OpenVPN wizard Certificate Authority Information step](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/images/pfsense/04-wizard-create-ca.png)
+</Frame>
+
+**Tunnel and crypto settings.** `10.10.10.0/24` as the VPN's virtual subnet (separate from the lab's `192.168.125.0/24`), `192.168.125.0/24` set as the **IPv4 Local Network** (this is what actually lets a connected client reach the lab), and **Redirect IPv4 Gateway** left unchecked for a split tunnel, so only lab-bound traffic goes through the VPN, not general internet browsing.
+
+<Frame caption="Tunnel network, local network, and cipher settings in the wizard.">
+  ![OpenVPN wizard cryptographic and tunnel settings](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/images/pfsense/05-wizard-tunnel-crypto-settings.png)
+</Frame>
+
+**DNS push.** DC01 (`192.168.125.10`) set as the pushed DNS server with `corp.lab` as the default domain, so connected clients can resolve lab hostnames.
+
+<Frame caption="Pushing DC01 as the DNS server for connected clients.">
+  ![OpenVPN wizard DNS settings](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/images/pfsense/06-wizard-dns-settings.png)
+</Frame>
+
+**Firewall rules.** Both auto-generated rules were enabled: one on WAN to permit incoming VPN connections, one on the OpenVPN interface to let connected clients' traffic actually pass through into the lab.
+
+<Frame caption="Enabling both auto-generated firewall rules for the VPN.">
+  ![OpenVPN wizard Firewall Rule Configuration step](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/images/pfsense/07-wizard-firewall-rule-step.png)
+</Frame>
+
+The finished server: WAN interface, UDP/1194, `Remote Access (User Auth)` mode.
+
+<Frame caption="The completed OpenVPN server listing.">
+  ![VPN OpenVPN Servers list showing corp-lab OpenVPN](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/images/pfsense/08-openvpn-server-created.png)
+</Frame>
+
+## 3. The broken certificate reference
+
+Trying to generate a client config (**VPN → OpenVPN → Client Export**) failed immediately:
+
+<Frame caption="Client export failing due to a broken CA reference on the server certificate.">
+  ![Could not locate the CA reference for the server certificate error](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/images/pfsense/09-ca-reference-export-error.png)
+</Frame>
+
+### Root cause
+
+Checking **System → Cert Manager → Authorities** showed `corp-lab-VPN-CA` existed, but with **0 certificates** issued under it, despite the OpenVPN server listing it as "In Use."
+
+<Frame caption="The CA shows zero certificates issued, despite being referenced by the OpenVPN server.">
+  ![Certificate Authorities list showing 0 certificates under corp-lab-VPN-CA](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/images/pfsense/10-ca-zero-certificates-issued.png)
+</Frame>
+
+The server certificate creation step earlier in the wizard had silently failed to save, so the server fell back to using pfSense's built-in `GUI default` self-signed certificate, which isn't signed by the CA at all, producing the mismatch.
+
+### The fix
+
+Created the server certificate manually and correctly this time, via **System → Cert Manager → Certificates → Add/Sign**, explicitly selecting `corp-lab-VPN-CA` as the issuer and **Server Certificate** as the certificate type (this matters: OpenVPN needs the correct TLS Web Server Authentication extension).
+
+<Frame caption="The server certificate created correctly this time, issued by corp-lab-VPN-CA.">
+  ![corp-lab-VPN-Server certificate showing Issuer corp-lab-VPN-CA](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/images/pfsense/11-server-cert-created-correctly.png)
+</Frame>
+
+The OpenVPN server's **Server Certificate** dropdown was then updated to point at this new cert instead of `GUI default`.
+
+## 4. Client export and first connection attempt
+
+The **OpenVPN Client Export Utility** package isn't installed by default, added via **System → Package Manager → Available Packages**.
+
+<Frame caption="Installing the openvpn-client-export package.">
+  ![Package Manager showing openvpn-client-export available for install](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/images/pfsense/12-client-export-package-install.png)
+</Frame>
+
+Before exporting, the server's **Backend for authentication** was double-checked to confirm `corp.lab AD` was actually selected (not Local Database), worth verifying directly given the certificate step had already silently failed once.
+
+<Frame caption="Confirming the OpenVPN server authenticates against corp.lab AD.">
+  ![OpenVPN server edit page showing corp.lab AD selected as authentication backend](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/images/pfsense/13-backend-auth-confirmed-ad.png)
+</Frame>
+
+The exported `.ovpn` file was imported into **OpenVPN Connect** on a physical machine completely outside the VMware environment.
+
+<Frame caption="Importing the exported .ovpn profile into OpenVPN Connect.">
+  ![OpenVPN Connect Upload File screen](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/images/pfsense/14-openvpn-connect-upload-file.png)
+</Frame>
+
+The first connection attempt just hung and timed out.
+
+<Frame caption="The first connection attempt timing out.">
+  ![OpenVPN Connect stuck on Trying to connect](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/images/pfsense/15-connection-timed-out.png)
+</Frame>
+
+## 5. The WAN private-network block
+
+Diagnosis ruled out the obvious suspects first: the OpenVPN service was confirmed running (**Status → OpenVPN**), and the WAN firewall rule permitting UDP/1194 was confirmed present and correctly configured.
+
+<Frame caption="Confirming the WAN firewall rule allowing UDP 1194 exists and is enabled.">
+  ![Firewall Rules WAN tab showing the OpenVPN pass rule](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/images/pfsense/17-wan-firewall-rule-confirmed.png)
+</Frame>
+
+The physical machine's own network info showed it had a direct route to pfSense's WAN subnet via a VMware virtual adapter, so routing itself wasn't the blocker either.
+
+<Frame caption="ipconfig showing the physical machine has a direct adapter on pfSense's WAN subnet.">
+  ![ipconfig output showing VMware Network Adapter IP addresses](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/images/pfsense/16-ipconfig-vmware-adapters.png)
+</Frame>
+
+### Root cause
+
+pfSense's WAN interface has a default protection, **"Block private networks and loopback addresses,"** which silently drops any traffic sourced from RFC1918 private ranges arriving on WAN. Since this WAN sits on a private VMware NAT address (`192.168.182.137`) rather than a real public IP, and the test client's address was private too, every connection attempt was being dropped before OpenVPN ever saw it.
+
+<Frame caption="The private-network block found enabled on the WAN interface — the actual cause of the timeout.">
+  ![Interfaces WAN settings showing Block private networks and loopback addresses checked](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/images/pfsense/18-block-private-networks-checked.png)
+</Frame>
+
+Unchecking it (leaving "Block bogon networks" on, since that one doesn't affect RFC1918 traffic) fixed the connection immediately.
+
+<Frame caption="Successfully connected once the private-network block was disabled.">
+  ![OpenVPN Connect showing Securely Connected](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/images/pfsense/19-securely-connected.png)
+</Frame>
+
+## 6. Verifying real routed access
+
+A working tunnel isn't proof of anything by itself, two independent checks confirmed actual routing into the lab.
+
+**ICMP to DC01**, showing genuine LAN-speed latency (1-3ms) once the route settled:
+
+<Frame caption="Pinging DC01 successfully through the tunnel.">
+  ![ping 192.168.125.10 showing successful replies](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/images/pfsense/20-ping-dc01-success.png)
+</Frame>
+
+**HTTPS to pfSense's own LAN-side management UI**, reached at `192.168.125.254` directly from the physical machine's browser:
+
+<Frame caption="Reaching pfSense's LAN UI directly, proving service-level (not just ICMP) access.">
+  ![pfSense Dashboard loaded from a browser over the VPN](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/images/pfsense/21-pfsense-lan-ui-over-vpn.png)
+</Frame>
+
+## 7. SMB access and the MTU problem
+
+The real test: reaching TrueNAS's SMB share (`\\192.168.125.40\Sharing`) from the connected physical machine. The first attempt failed outright, before even reaching a credential prompt:
+
+<Frame caption="Windows unable to access the SMB share at all.">
+  ![Windows cannot access network share error](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/images/pfsense/22-smb-access-denied-error.png)
+</Frame>
+
+Diagnosis ruled out connectivity first, `Test-NetConnection` confirmed port 445 was fully reachable:
+
+<Frame caption="Confirming TCP port 445 is reachable on TrueNAS — this isn't a routing or firewall problem.">
+  ![Test-NetConnection showing TcpTestSucceeded True on port 445](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/images/pfsense/23-test-netconnection-port445-true.png)
+</Frame>
+
+But a direct `net use` attempt failed with a specific, telling error:
+
+<Frame caption="net use failing with 'the network name cannot be found' — after the port test succeeded.">
+  ![net use command showing System error 67](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/images/pfsense/24-net-use-error67-name-not-found.png)
+</Frame>
+
+### Root cause
+
+This pattern (small packets like ping, HTTPS, or a bare TCP handshake succeeding while a fuller SMB session with a larger authentication payload silently died mid-negotiation) pointed at **MTU/fragmentation over the OpenVPN tunnel**. OpenVPN's default tunnel MTU, once UDP and encapsulation overhead are accounted for, can leave larger packets getting black-holed rather than properly fragmented.
+
+### The fix
+
+Added explicit MTU directives to the OpenVPN server's **Advanced Configuration → Custom options**:
+
+```text
+tun-mtu 1400;
+mssfix 1360;
+```
+
+<Frame caption="Adding tun-mtu and mssfix directives to keep tunnel packets safely under the fragmentation threshold.">
+  ![OpenVPN server Advanced Configuration custom options with tun-mtu and mssfix](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/images/pfsense/25-mtu-mssfix-config.png)
+</Frame>
+
+After a full disconnect/reconnect of the VPN client to pick up the new settings, the SMB share mapped cleanly and appeared as a normal network drive.
+
+<Frame caption="The TrueNAS share successfully mapped as drive Z:, fully browsable over the VPN.">
+  ![This PC showing the Sharing network drive mapped as Z](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/images/pfsense/26-z-drive-mapped-this-pc.png)
+</Frame>
+
+### Bonus finding: the ACL actually works
+
+Opening the mapped drive as `Administrator` was denied, a useful confirmation, not a bug:
+
+<Frame caption="Administrator denied access to the share despite valid authentication — the AD-group ACL is being enforced correctly.">
+  ![Windows permission denied error opening the mapped drive as Administrator](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/images/pfsense/27-administrator-acl-access-denied.png)
+</Frame>
+
+Reconnecting as `aking`, the `operations-staff` group member the ACL was actually built for, succeeded, showing the exact `test.txt` file created during the original TrueNAS SMB verification:
+
+<Frame caption="aking successfully browsing the share over VPN, proving the AD-group ACL is enforced identically over a remote connection.">
+  ![File Explorer showing test.txt.txt visible when connected as aking](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/images/pfsense/28-aking-smb-access-success.png)
+</Frame>
+
+## Result
+
+| Component | Status |
+| --- | --- |
+| LDAP authentication | pfSense validates `corp.lab` credentials via DC01 |
+| OpenVPN server | Remote Access (User Auth), UDP/1194, properly CA-signed certificate |
+| Routing | Full `192.168.125.0/24` reachable, verified via ICMP and HTTPS |
+| SMB access | Verified working, with the AD-group ACL correctly enforced over VPN |
+
+Four distinct root causes were found and fixed along the way: an LDAP bind DN format issue, a silently-failed certificate creation step, a default WAN protection blocking private-range traffic, and an OpenVPN MTU/fragmentation problem masking itself as an SMB permissions issue. None were guessed, each was isolated with a specific diagnostic (debug logs, `Test-NetConnection`, `net use` error codes, direct cert-store inspection) before being fixed.
+
+**Not yet resolved:** the `aking` account's LDAP bind failure against pfSense specifically (separate from TrueNAS's own successful AD join, which authenticates `aking` fine), deferred since it didn't block the build.

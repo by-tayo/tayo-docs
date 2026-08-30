@@ -15,7 +15,7 @@ This phase takes a bare Windows Server 2022 VM to a functioning domain controlle
     Create the VM: 2 vCPU, 4GB RAM, 60GB disk. Attach two network adapters — one set to **Custom → VMnet1** (host-only), one set to **NAT**. Install **Windows Server 2022 Datacenter Evaluation (Desktop Experience)**.
 
     <Frame caption="VM Settings — network adapter set to Custom (VMnet1)">
-      ![VMware Workstation VM settings showing the network adapter set to Custom VMnet1](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/vm_network_adapter_vmnet1.png)
+      ![VMware Workstation VM settings showing the network adapter set to Custom VMnet1](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/images/vm_network_adapter_vmnet1.png)
     </Frame>
 
     <Note>
@@ -26,7 +26,7 @@ This phase takes a bare Windows Server 2022 VM to a functioning domain controlle
     Inside Windows, set the `VMnet1` adapter to a static IP — `192.168.125.10`, subnet mask `255.255.255.0`, no gateway (this adapter is domain-only, not an internet path), DNS pointed at `127.0.0.1` since this machine will run its own AD-integrated DNS once promoted. Leave the NAT adapter on automatic/DHCP.
 
     <Frame caption="Network Connections on DC01">
-      ![Windows Network Connections showing the Ethernet adapters on DC01](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/network_adapters.png)
+      ![Windows Network Connections showing the Ethernet adapters on DC01](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/images/network_adapters.png)
     </Frame>
   </Step>
   <Step title="Rename the computer">
@@ -36,14 +36,14 @@ This phase takes a bare Windows Server 2022 VM to a functioning domain controlle
     From Server Manager → **Add Roles and Features**, install **Active Directory Domain Services**. This only stages the binaries — it does not create a domain yet.
 
     <Frame caption="Add Roles and Features Wizard — Active Directory Domain Services selected">
-      ![Add Roles and Features Wizard with AD DS checked on the Server Roles screen](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/ad_ds_role_install.png)
+      ![Add Roles and Features Wizard with AD DS checked on the Server Roles screen](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/images/ad_ds_role_install.png)
     </Frame>
   </Step>
   <Step title="Promote to a domain controller">
     Click the notification flag in Server Manager → **Promote this server to a domain controller** → **Add a new forest**, root domain `corp.lab`. Accept the DNS delegation warning (expected in a lab with no parent zone), set a DSRM password, and let it install and reboot.
 
     <Frame caption="AD DS Configuration Wizard — Deployment Configuration screen">
-      ![AD DS Configuration Wizard showing the Add a new forest option with root domain corp.lab](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/ad_ds_deployment_config.png)
+      ![AD DS Configuration Wizard showing the Add a new forest option with root domain corp.lab](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/images/ad_ds_deployment_config.png)
     </Frame>
   </Step>
 </Steps>
@@ -70,18 +70,18 @@ Bulk provisioning (next phase) needs PowerShell scripts and a CSV copied onto DC
 Install it via **VM → Install VMware Tools** in the Workstation menu, run `setup64.exe` from the mounted virtual CD inside Windows, and reboot. Then enable a shared folder pointing at a local (non-cloud-synced) folder on the host — OneDrive or similar cloud-sync folders can leave files as unmaterialized placeholders that VMware can't read correctly, so a plain local folder is more reliable.
 
 <Frame caption="The error hit before VMware Tools was installed in the guest">
-  ![Windows Network Error dialog: cannot access the vmware-host Shared Folders path](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/shared_folder_network_error.png)
+  ![Windows Network Error dialog: cannot access the vmware-host Shared Folders path](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/images/shared_folder_network_error.png)
 </Frame>
 
 <Frame caption="Add Shared Folder Wizard, configuring the local LabFiles path">
-  ![VMware Add Shared Folder Wizard with Host path and Name fields](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/vmware_shared_folders.png)
+  ![VMware Add Shared Folder Wizard with Host path and Name fields](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/images/vmware_shared_folders.png)
 </Frame>
 
 <Warning>
   Copying `.ps1` files through a network share isn't always lossless — in this build, one script's content got corrupted in transit (the file ended up containing prose instead of code, which PowerShell then failed to parse with a string of confusing syntax errors). Here's what that actually looked like on-screen:
 
   <Frame caption="The corrupted import-users.ps1 failing to parse — prose text where PowerShell code should be">
-    ![PowerShell parse errors from a corrupted script file](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/script_corruption_error.png)
+    ![PowerShell parse errors from a corrupted script file](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/images/script_corruption_error.png)
   </Frame>
 
   Sanity-check any copied script before running it:
