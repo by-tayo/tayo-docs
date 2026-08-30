@@ -1,82 +1,117 @@
 ---
 title: "Active Directory Homelab — Corporate Network Simulation"
 sidebarTitle: "Overview"
-description: "Building a Windows Server 2022 domain controller and Windows 11 client in VMware Workstation Pro, with AD DS, RAS/NAT, DHCP, and bulk user provisioning."
+description: "Building a Windows Server 2022 domain controller, a pfSense router, and a Windows 11 client in VMware Workstation Pro, with AD DS, bulk user provisioning, and dedicated network routing."
 icon: "sitemap"
 ---
 
-This lab builds a working Active Directory environment from scratch: a Windows Server 2022 domain controller, a Windows 11 client joined to the domain, and an isolated internal network that still reaches the internet through the DC. The goal is a corporate network simulation — a realistic base to layer security practices onto later, rather than a one-off exercise in clicking through a role installation wizard.
-
-The part worth paying attention to is the networking. The client sits on a private, isolated network with no direct route out. Everything it does — DHCP lease, DNS resolution, internet access — depends on the domain controller being configured correctly as gateway, DHCP server, and NAT router. Get one of those wrong and the client silently fails in a way that looks like an AD problem but isn't.
+This lab is built to do double duty: a realistic Active Directory environment for practicing day-to-day sysadmin work — domain setup, OU design, bulk provisioning, delegation, GPOs — and a self-contained range for practicing offensive AD techniques and the detection side of the same attacks. It's sized to run comfortably alongside a security toolkit on a single 32GB host, using a hypervisor that's now free for personal use.
 
 <CardGroup cols={2}>
   <Card title="Hypervisor" icon="server">
-    VMware Workstation Pro 17
+    VMware Workstation Pro (free for personal use)
   </Card>
 
   <Card title="Domain Controller" icon="windows">
-    Windows Server 2022
+    Windows Server 2022 Datacenter (Evaluation)
   </Card>
 
-  <Card title="Client" icon="desktop">
-    Windows 11
+  <Card title="Router / Firewall" icon="shield-halved">
+    pfSense CE 2.8.1 — routing, DHCP, and firewalling for the isolated lab network
+  </Card>
+
+  <Card title="Directory" icon="users">
+    1,050 users across 8 departments
   </Card>
 
   <Card title="Provisioning" icon="terminal">
-    PowerShell
+    PowerShell \+ CSV, bulk-scripted
   </Card>
 </CardGroup>
 
-## What Gets Built
+## What's Built So Far
 
 ```text
-DC (Server 2022) ─┬─ NAT adapter ────────→ Internet
-                  └─ Internal adapter ───→ Isolated LAN ──→ Windows 11 client
+Host (32GB RAM, VMware Workstation Pro)
+ ├─ VMnet1 (host-only, 192.168.125.0/24)
+ │    ├─ pfSense CE — LAN 192.168.125.254 (router, DHCP, firewall for the lab network)
+ │    ├─ DC01 — Windows Server 2022 Datacenter, static 192.168.125.10 (Sysmon + Splunk UF)
+ │    ├─ CLIENT01 — Windows 11, static 192.168.125.20, joined to corp.lab (Sysmon + Splunk UF)
+ │    ├─ LOGSRV — Ubuntu Server 26.04 LTS, static 192.168.125.30, Splunk Enterprise on :9997
+ │    ├─ STORAGE01 — TrueNAS SCALE 25.10.6, static 192.168.125.40, ZFS pool `tank`, AD-joined, SMB share, syslog → LOGSRV:5514
+ │    └─ Kali attacker VM — DHCP 192.168.125.101, BloodHound CE via Docker
+ └─ VMnet8 (NAT — VMware-managed)
+      └─ pfSense's WAN interface only — internet access for the whole lab network
 
-Roles on the DC: AD DS · DNS · DHCP · RAS with NAT
+DC01 roles: AD DS + DNS
+Domain: corp.lab (new forest)
 ```
 
-The domain controller runs four things that matter: Active Directory Domain Services for the domain itself, DNS as a dependency of AD DS, DHCP so the client can lease an address without manual configuration, and Remote Access Server with NAT so traffic from the isolated network can reach the internet through the DC's second adapter.
+pfSense CE now owns routing, DHCP, and firewalling for the entire lab network — replacing an earlier design where every VM carried its own NAT adapter alongside a static IP on the isolated network. That per-VM setup worked at first but proved fragile (a static IP silently reverting to DHCP was the final straw), so the lab now routes through a single dedicated router VM instead, the same way a real network would. See [Architecture](/projects/ad-homelab/architecture) for the full reasoning.
 
 ## Build Phases
 
 <Steps>
   <Step title="Architecture">
-    The dual-adapter design on the domain controller, why the client is isolated, and how traffic actually flows out of the private network.
+    The VMware networking design — pfSense as router/DHCP/firewall for the isolated network, static addressing, and how the OU/department structure is laid out.
 
-    → [Network Architecture](/projects/ad-homelab/architecture)
+    → [Network & Directory Architecture](/projects/ad-homelab/architecture)
   </Step>
   <Step title="Build">
-    Provisioning the server VM, configuring the internal adapter with a static address and DNS, installing AD DS, and promoting the machine to a domain controller.
+    Provisioning the domain controller, standing up pfSense as the lab's router, building the Windows 11 client, and joining it to the `corp.lab` domain.
 
     → [Building the Domain Controller](/projects/ad-homelab/build)
   </Step>
   <Step title="Configuration">
-    Creating the domain admin account, standing up RAS with NAT, configuring DHCP scope options, and bulk-provisioning over a thousand users with PowerShell.
+    Scripting the OU tree and department groups, bulk-provisioning 1,050 users from a generated CSV, and delegating help-desk permissions.
 
-    → [Roles & User Provisioning](/projects/ad-homelab/configuration)
+    → [OU Structure & Bulk Provisioning](/projects/ad-homelab/configuration)
   </Step>
-  <Step title="Validation">
-    Joining the Windows 11 client to the domain and confirming the whole chain works — lease issued, gateway reachable, domain login successful.
+  <Step title="Security Telemetry">
+    Building LOGSRV (Ubuntu Server 26.04 LTS) with Splunk Enterprise, deploying Sysmon on DC01 and `CLIENT01`, and forwarding events through the Splunk Universal Forwarder into a single indexed pipeline. **Complete** — covered in the [Build](/projects/ad-homelab/build) page.
+  </Step>
+  <Step title="Group Policy">
+    Three observable GPOs applied and confirmed on `CLIENT01` — interactive logon banner, desktop wallpaper via UNC (with Loopback Processing in Merge mode), and a Control Panel / PC Settings restriction. **Complete** — see the [Status & Next Steps](/projects/ad-homelab/validation) page.
+  </Step>
+  <Step title="Attack / Detection">
+    Kali attacker VM wired into `VMnet1`, BloodHound Community Edition run remotely as `jsmith` to confirm a clean baseline, then a full Kerberoasting attack executed against a deliberately vulnerable `svc_sql` service account: hash extracted with `impacket-GetUserSPNs`, cracked offline with `hashcat`, and caught in Splunk as Windows Security Event ID `4769` on DC01 with the RC4 ticket-encryption flag and the Kali source IP. **Complete**.
 
-    → [Joining & Verifying the Client](/projects/ad-homelab/validation)
+    → [Building the Domain Controller](/projects/ad-homelab/build) · [Status & Next Steps](/projects/ad-homelab/validation)
+  </Step>
+  <Step title="TrueNAS Storage Node">
+    TrueNAS SCALE stood up as `STORAGE01` at `192.168.125.40`: single-disk ZFS pool `tank` (past a VMware-specific duplicate-serial issue solved via `disk.EnableUUID`), AD-joined to `corp.lab`, `Sharing` SMB share with an NFSv4 ACL scoped to the `operations-staff` AD group, end-to-end write test from `CLIENT01` as non-admin `aking`, and TrueNAS syslog forwarded into Splunk on LOGSRV over UDP `5514`. **Complete**.
+
+    → [TrueNAS Storage](/projects/ad-homelab/truenas)
+  </Step>
+  <Step title="Validation & Next Steps">
+    What's been verified so far, and what remains as small loose ends now that the attack/detection scenario is complete.
+
+    → [Status & Next Steps](/projects/ad-homelab/validation)
   </Step>
 </Steps>
 
 ## Skills Exercised
 
-- Active Directory Domain Services installation and domain creation
-- Windows Server role management (DNS, DHCP, Remote Access)
-- NAT configuration and routing between isolated and external networks
-- DHCP scope and scope option configuration
-- PowerShell scripting and execution policy handling
-- Bulk user account provisioning at scale
-- Domain join and client-side network troubleshooting
+- Active Directory Domain Services installation and forest/domain creation
+- VMware Workstation networking — host-only isolation, static addressing, virtual network editor configuration
+- Standing up and configuring a dedicated router/firewall (pfSense CE) — interface assignment, DHCP scoping, and re-pointing existing VMs at a new gateway
+- Windows 11 client provisioning, including a local-account-only setup (no Microsoft account) to keep the machine clean for later forensics work
+- Domain join troubleshooting: diagnosing a static IP silently reverting to DHCP/APIPA, clearing a stale IP binding, and telling networking failures apart from AD failures
+- OU design and department-based security group structure, built via PowerShell rather than clicking through ADUC
+- Bulk user provisioning at scale (1,050 accounts) from a CSV, including idempotent re-runs and progress reporting
+- Real deployment troubleshooting: PowerShell execution policy, file corruption across a network share, and rewriting scripts to avoid fragile syntax (backtick line-continuations) under real-world copy conditions
+- Least-privilege delegation of administrative control
+- Splunk / SIEM administration — installing Splunk Enterprise on Ubuntu, enabling the forwarder receiver on port `9997`, and running SPL searches (`stats count by host`, filtering by `sourcetype`) to validate the pipeline end to end
+- Sysmon deployment on Windows endpoints using the SwiftOnSecurity ruleset, plus a custom `inputs.conf` stanza on the Splunk Universal Forwarder to ship the Sysmon Operational channel alongside the default Windows logs
+- Linux storage troubleshooting — diagnosing a silent Splunk index/search failure caused by a full LVM root volume and extending it live with `lvextend` \+ `resize2fs`
+- Group Policy authoring and troubleshooting — interactive logon banner, UNC-based desktop wallpaper, and Control Panel / PC Settings restrictions, including using Loopback Processing (Merge mode) to apply User Configuration settings against a Computers OU and verifying with `gpupdate /force` \+ `gpresult /r`
+- Offensive AD enumeration — BloodHound Community Edition deployed on Kali via Docker Compose, `bloodhound-ce-python` collector run remotely over LDAP with low-privilege credentials, and Cypher pathfinding queries used to check for privilege-escalation paths and Kerberoastable accounts
+- Kerberoasting (offensive) — deliberately weak `svc_sql` service account with an SPN registered, `impacket-GetUserSPNs` used to extract a TGS-REP hash as a low-privilege domain user, and offline cracking with `hashcat` (mode `13100`) using both `rockyou.txt` and a targeted custom wordlist
+- Kerberos ticket-request detection (defensive) — Windows Security Event ID `4769` on DC01 correlated in Splunk to identify the requesting account, the source IP, and RC4 (`0x17`) ticket encryption as a real-world Kerberoasting indicator, on the same Sysmon \+ Splunk pipeline stood up earlier
+- TrueNAS SCALE / ZFS storage administration — pool creation on a single virtual disk, diagnosing a VMware-specific duplicate-serial-number failure by bypassing the GUI (`midclt call pool.create`) and reading the middleware error directly, then fixing it via `disk.EnableUUID = "TRUE"` in the `.vmx` and confirming with `udevadm`
+- Domain-joined SMB file services on non-Windows — TrueNAS AD join under `corp.lab` with Kerberos User credentials, NFSv4 ACL mapping a real AD group (`operations-staff`) to Modify on a dataset, and end-to-end write testing from `CLIENT01` as an unprivileged domain user (`aking`) rather than an admin
+- Cross-platform log ingestion into Splunk — remote syslog forwarding from TrueNAS into an existing Splunk instance over UDP on a non-privileged port (`5514`), including diagnosing the port-`514` bind failure via `ps -ef` and `ss -tulnp` as a service-account permissions issue rather than a port conflict
 
 <Note>
-  Source repository: [by-tayo/ad-homelab](https://github.com/by-tayo/ad-homelab)
+  This lab is actively being built. This documentation is updated as each phase completes, so treat later pages as more current than earlier ones.
 </Note>
-
-<Info>
-  The original build followed along with lab material from Josh Madakor, a creator in the cybersecurity and IT space.
-</Info>

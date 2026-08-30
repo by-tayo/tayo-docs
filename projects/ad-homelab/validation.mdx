@@ -1,62 +1,51 @@
 ---
 title: "Joining & Verifying the Client — Domain Join Validation"
 sidebarTitle: "Validation"
-description: "Placing the Windows 11 client on the isolated network, joining it to the domain, and verifying the lease, gateway, and domain login all work end to end."
+description: "Placing pfSense in front of the lab network, joining the Windows 11 client to the domain, and tracking what's verified against what's still queued."
 icon: "circle-check"
 ---
 
-Everything built so far is theory until a client uses it. This phase puts the Windows 11 machine on the isolated network, joins it to the domain, and confirms each link in the chain — addressing, routing, and authentication — actually holds.
+This lab is a work in progress rather than a finished build. This page tracks what's actually been verified against what's still planned, updated as each phase lands.
 
-## Placing the Client on the Internal Network
+## Confirmed Working
 
-For the Windows 11 VM to sit inside the private internal network, its adapter is switched over in the VM's network settings to act as an internal NIC rather than using NAT directly. Once it is on that network, it has no independent path out: it depends entirely on the domain controller.
-
-The client is then left to obtain its address automatically. If the DHCP scope is configured correctly, it leases an address from the domain controller — which is also its route to the internet, by way of the NAT configuration on the DC.
-
-<Frame caption="The Windows 11 client running on the isolated internal network">
-  ![Windows 11 client virtual machine](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/images/windows_11_client.png)
-</Frame>
-
-## Confirming the Lease
-
-The cleanest place to verify addressing is from the server side rather than the client. On the domain controller, open the DHCP console and check **Address Leases** for the scope.
-
-The client appears there with the address it was issued. Verifying from the DC confirms two things at once: that the client reached the DHCP server, and that the server considers the lease valid.
-
-<Tip>
-  If no lease appears, the problem is upstream of Active Directory — the client is not reaching the DHCP server at all. Check that both VMs are attached to the same internal network in VMware before touching anything inside Windows.
-</Tip>
-
-## Joining the Domain
-
-With addressing working, the client is configured as a member of the domain. This is the point where DNS matters: the client locates the domain controller through the DNS records AD DS published during promotion, which is why the DC had to be the client's DNS server.
-
-## Verifying Domain Login
-
-The final check is logging into the client using a domain account rather than a local one — authenticating against the domain, not the machine.
-
-A successful domain login means the entire chain worked:
-
-<Frame caption="Confirming the client is joined to the domain">
-  ![Windows 11 client showing domain membership](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/images/verify_domain.png)
-</Frame>
-
-| Component | What a successful login proves |
+| Item | Verification |
 | --- | --- |
-| DHCP | The client leased a valid address on the internal network |
-| Scope options | The client has a default gateway and can route off-subnet |
-| RAS with NAT | Traffic from the isolated network reaches the internet |
-| DNS | The client resolved and located the domain controller |
-| AD DS | The domain accepted the credentials and authenticated the account |
+| Domain controller promoted | `dcdiag` and `repadmin /replsummary` run clean (aside from a benign `SystemLog` false-positive — see [Build](/projects/ad-homelab/build)) |
+| Host-only network isolation | `VMnet1` static addressing confirmed, no cross-talk with the home network |
+| pfSense routing | `ping` to the gateway (`192.168.125.254`) and to `8.8.8.8` returns 0% packet loss from both DC01 and CLIENT01 |
+| OU tree and department groups | 8 departments, each with `Users`/`Groups`/`Computers` sub-OUs and a `-Staff` group, built via `setup-ou-structure.ps1` |
+| Bulk user provisioning | 1,050 accounts created, 0 skipped, verified via `Get-ADUser -Filter * -SearchBase 'OU=Corp,DC=corp,DC=lab' \| Measure-Object` |
+| Help-desk delegation | `Reset user passwords` permission delegated to the `Helpdesk` group on the `IT` OU |
+| Client join | `CLIENT01` (Windows 11, local-account-only) built, given a static IP, and joined to `corp.lab` — confirmed via System Properties showing `Domain: corp.lab` and the computer object appearing in ADUC's default `Computers` container |
+| Client hostname aligned with lab naming | `CLIENT01` renamed from its Windows-assigned default (`DESKTOP-HNA8DUJ`) to `CLIENT01` — confirmed as the reporting `host` value in Splunk after the rename |
+| Security telemetry pipeline | Sysmon (SwiftOnSecurity config) deployed on DC01 and `CLIENT01`, Splunk Universal Forwarder installed on both, indexed by Splunk Enterprise on LOGSRV — verified end-to-end with `index=main \| stats count by host` (4,393\+ events from DC01, 318\+ from `CLIENT01`, 1,962 of them Sysmon process-creation events) |
+| GPO — Interactive logon banner | Linked to `CLIENT01`'s OU, banner text confirmed showing on the Windows sign-in screen after `gpupdate /force` and a reboot |
+| GPO — Desktop wallpaper via UNC | `\\DC01\Wallpaper` share applied through a User Configuration policy with **Loopback Processing (Merge mode)** enabled so it applies on the Computers OU — `gpresult /r` on `CLIENT01` confirms the policy is being applied |
+| GPO — Prohibit access to Control Panel and PC Settings | Restriction confirmed by the **Restrictions** block dialog popping up when opening Control Panel or Settings on `CLIENT01` |
+| Kali attacker VM on the lab network | Existing Kali VM re-homed onto `VMnet1`, DHCP address `192.168.125.101` from pfSense — connectivity to the gateway, the internet, and `nslookup corp.lab` against DC01 all confirmed |
+| BloodHound CE installed on Kali | BloodHound Community Edition deployed via Docker Compose (Postgres app-db, Neo4j graph-db, and the BloodHound app), web UI reachable at `http://localhost:8080` |
+| Domain enumeration with BloodHound | `bloodhound-ce-python` run remotely over LDAP as `jsmith` — collected 1,030 users, 61 groups, 5 GPOs, 34 OUs, 19 containers, 2 computers (DC01 \+ `CLIENT01`), 0 trusts; `.zip` uploaded into BloodHound and processed successfully |
+| Baseline attack-path check | Cypher shortest-path query from `jsmith` to `Domain Admins` returns **no path**; `MATCH (u:User {hasspn:true})` returns **none** — the expected clean baseline before any misconfiguration is introduced |
+| Deliberately vulnerable service account | `svc_sql` created in the `IT` OU with a weak password (`Summer2024!`) and `MSSQLSvc/dc01.corp.lab:1433` registered via `setspn -S` — visible to `bloodhound-ce-python` and to any authenticated domain user |
+| Kerberoasting attack executed from Kali | `impacket-GetUserSPNs corp.lab/jsmith -dc-ip 192.168.125.10 -request` run as low-privilege `jsmith` — returned the TGS-REP for `svc_sql` in `hashcat` mode `13100` format, no admin rights or domain-machine foothold required |
+| Offline password crack | `rockyou.txt` missed (as expected for a 2009 corpus vs. a newer-style password); a small custom season/year wordlist recovered `Summer2024!` via `hashcat -m 13100` |
+| Attack detected in Splunk | `index=main host=DC01 EventCode=4769 Service_Name=svc_sql` returned the exact ticket request: `Account_Name=jsmith@CORP.LAB`, `Client_Address=192.168.125.101` (Kali), `Ticket_Encryption_Type=0x17` (RC4) — full offense-to-detection loop closed on the existing Sysmon \+ Splunk pipeline with no new instrumentation |
+| pfSense migration cleanup | Redundant `VMnet8` NAT adapters fully removed from DC01 and `CLIENT01` (not just disconnected) — both VMs now have a single `VMnet1` adapter, routing exclusively through pfSense |
+| TrueNAS storage node online | `STORAGE01` (TrueNAS SCALE 25.10.6) built at `192.168.125.40` with a healthy single-disk ZFS pool `tank`, past a VMware duplicate-serial issue resolved via `disk.EnableUUID = "TRUE"` in the `.vmx` and confirmed with `udevadm` |
+| TrueNAS AD domain join | `STORAGE01` joined to `corp.lab` under **Credentials → Directory Services** with Kerberos User credentials — Active Directory Status **HEALTHY** after removing a non-AD secondary DNS entry (pfSense) that was breaking SRV lookups |
+| SMB share with AD-group ACL | `Sharing` share on `/mnt/tank/shared` with an NFSv4 ACL granting **Modify** to `CORP\operations-staff`, plus the duplicate `shared` entry (case-collision workaround) cleaned up |
+| SMB write test as non-admin domain user | `aking` (member of `operations-staff`, not a domain admin) logged in on `CLIENT01`, browsed `\\192.168.125.40\Sharing` over SMB, and created `test.txt` — proving the full AD-group → NFSv4 ACL → SMB share chain end to end |
+| TrueNAS syslog into Splunk | TrueNAS syslog forwarded to LOGSRV over UDP `5514` (moved off privileged port `514` after the Splunk service account couldn't bind to it); `source="syslog" index="main" sourcetype="syslog" host=192.168.125.40` returns live, ongoing events |
 
-If any one of those were misconfigured, the login would fail — which makes it a useful single test rather than five separate ones.
+## In Progress / Queued
 
-## Outcome
+<Steps>
+  <Step title="TrueNAS ↔ Tailscale off-lab backup (deferred)">
+    Connect `STORAGE01` to Tailscale as an external backup target for the separate [CloudHUB](https://github.com/by-tayo/CloudHUB) project (self-hosted Nextcloud on AWS). Deferred until CloudHUB's own backup story is ready.
+  </Step>
+</Steps>
 
-The lab now stands as a functioning Active Directory environment: a domain controller handling directory, DNS, addressing, and routing; a domain-joined Windows 11 client on an isolated network with working internet access; and a directory populated with over a thousand user accounts.
+## Why This Page Reads Like a Checklist
 
-That population is the point. A domain with two accounts cannot demonstrate much, but one with a realistic user base is a foundation for the next stage — building out a corporate network simulation and implementing security strategies against it.
-
-<Note>
-  Source repository: [by-tayo/ad-homelab](https://github.com/by-tayo/ad-homelab)
-</Note>
+A completed writeup with a tidy "everything worked" narrative is less useful than an honest record of what's actually been done — this page exists so the state of the lab is always clear at a glance, rather than implying validation that hasn't happened yet. Each item above moves to "Confirmed Working" once it's actually been run and checked, not before.

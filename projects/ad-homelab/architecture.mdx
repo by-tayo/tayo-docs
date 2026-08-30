@@ -1,69 +1,76 @@
 ---
-title: "AD Homelab Network Architecture — Dual-NIC Isolated Design"
+title: "AD Homelab Network Architecture — pfSense-Routed Isolated Design"
 sidebarTitle: "Architecture"
-description: "How the domain controller uses two network adapters to bridge an isolated internal network to the internet, acting as gateway, DNS server, and NAT router."
+description: "How pfSense CE provides routing, DHCP, and firewalling for the isolated lab network, and how the directory itself is organized."
 icon: "diagram-project"
 ---
 
-The networking design is what makes this lab behave like a corporate environment rather than two VMs on a shared network. The client has no independent route to the internet. Every packet it sends outbound passes through the domain controller, which means the DC has to play several roles at once.
+Two separate design decisions shape this lab: how the network isolates and routes domain traffic, and how the directory itself is organized once it exists.
 
-## The Two-Adapter Design
+## Network Design
 
-The domain controller is configured with two network adapters:
+The network went through one real redesign. It originally had every lab VM carry two adapters — a static IP on an isolated host-only network, plus its own independent NAT adapter for internet access — with no shared gateway at all. That's since been replaced with a single dedicated router VM running pfSense Community Edition, sitting between the isolated network and the internet:
 
 <CardGroup cols={2}>
-  <Card title="NAT Adapter" icon="globe">
-    Attached to VMware's NAT network. This is the DC's path to the internet — patching, updates, and any outbound traffic it forwards on behalf of the client.
+  <Card title="VMnet1 — LAN" icon="network-wired">
+    `192.168.125.0/24`. pfSense's LAN interface (`192.168.125.254`) is the gateway, DHCP server, and firewall for every machine on this network. Each domain VM now needs only one adapter.
   </Card>
 
-  <Card title="Internal Adapter" icon="network-wired">
-    Attached to an isolated internal network. This is the domain-facing side, carrying all traffic between the DC and the Windows 11 client.
+  <Card title="VMnet8 — WAN" icon="globe">
+    VMware-managed NAT. Only pfSense's WAN interface sits here — it's the single exit point for the whole lab network's internet access, instead of every VM having its own NAT adapter.
   </Card>
 </CardGroup>
 
-The internal adapter is configured manually with a static IP address, subnet mask, and DNS setting. Static addressing matters here: the DC is going to be the DNS server for the domain, and a domain controller whose own address moves is a domain controller that breaks its clients.
-
-## Traffic Flow
-
 ```text
-┌──────────────────┐
-│  Windows 11 Client │
-│  (no default GW    │
-│   of its own)      │
-└────────┬─────────┘
-         │  isolated internal network
-         ▼
-┌────────────────────────────────────┐
-│  Domain Controller (Server 2022)      │
-│  • Internal NIC — static IP, gateway  │
-│  • AD DS + DNS                        │
-│  • DHCP — leases to the client        │
-│  • RAS with NAT — translates outbound │
-│  • NAT NIC — uplink                   │
-└────────┬────────────────────────────┘
-         ▼
-     Internet
+pfSense (LAN)      192.168.125.254   (VMnet1, static)  +  WAN adapter (VMnet8, DHCP)
+DC01               192.168.125.10    (VMnet1, static)  → forwards Windows + Sysmon logs to LOGSRV:9997
+CLIENT01           192.168.125.20    (VMnet1, static)  → forwards Windows + Sysmon logs to LOGSRV:9997
+LOGSRV             192.168.125.30    (VMnet1, static)  — Ubuntu Server 26.04 LTS, Splunk Enterprise, receiving on 9997 (UF) + 5514/UDP (syslog)
+STORAGE01          192.168.125.40    (VMnet1, static)  — TrueNAS SCALE 25.10.6, ZFS pool `tank`, AD-joined, SMB share, syslog → LOGSRV:5514
+ATTACKER (Kali)    192.168.125.101   (VMnet1, DHCP)    — BloodHound CE via Docker Compose
 ```
 
-## Why the DC Wears Four Hats
-
-Each role on the domain controller exists to solve a specific problem created by isolating the client.
-
-| Role | Problem it solves |
-| --- | --- |
-| AD DS | Provides the domain the client authenticates against |
-| DNS | Resolves domain records; installed as an AD DS dependency |
-| DHCP | Gives the isolated client an address without manual configuration |
-| RAS with NAT | Translates the client's private traffic so it can reach the internet |
-
-Without NAT, the client leases an address and joins the domain but has no internet. Without DHCP, the client needs manual addressing and the lab stops resembling a real network. Without the DC as default gateway, outbound traffic has nowhere to go.
-
-## The Default Gateway Problem
-
-There is one wrinkle that catches people out. A client leasing an address from DHCP does not automatically know where to send traffic destined for anything outside its own subnet — it needs a default gateway, and that has to be handed to it explicitly.
-
-In this build the gateway is supplied through DHCP scope options rather than configured on the client, along with a loopback address. That configuration is covered on the [Configuration](/projects/ad-homelab/configuration) page.
+LOGSRV is fully built and actively indexing forwarded events. DC01 and `CLIENT01` each run Sysmon (SwiftOnSecurity config) plus the Splunk Universal Forwarder, sending Windows Event Logs and the Sysmon Operational channel to Splunk on `LOGSRV:9997`. `STORAGE01` (TrueNAS SCALE) is domain-joined to `corp.lab`, exposes an SMB share off a ZFS pool with an AD-group-mapped ACL, and forwards its own syslog into the same Splunk instance over UDP `5514` — extending the pipeline beyond Windows-only telemetry to the storage node. The Kali attacker VM is live on `VMnet1` with BloodHound Community Edition installed for offensive AD enumeration and attack-path analysis. See [TrueNAS Storage](/projects/ad-homelab/truenas) for the storage-node build.
 
 <Tip>
-  If the client can ping the domain controller but nothing beyond it, the problem is almost always the gateway or NAT — not Active Directory. Check the scope options before you start troubleshooting the domain.
+  `.1` on `VMnet1` is already claimed by the host machine's own virtual adapter, which VMware creates automatically for host-only networks — that's why pfSense's LAN interface sits at `.254` instead of the more conventional `.1`. DHCP is enabled on pfSense's LAN interface with a scope reserved for future/ad-hoc VMs (`192.168.125.100`–`199`), but the core domain machines keep static IPs assigned by hand for predictability.
 </Tip>
+
+## Why pfSense Instead of Per-VM NAT
+
+The original per-VM design was simple to reason about on paper, but it turned out to be the more fragile choice in practice: with no shared gateway, each machine's networking was independently something that could break — and it did. The domain controller's static IP silently reverted to DHCP/APIPA at one point, which took real troubleshooting time to catch, since nothing about the symptom (client can't reach the DC) pointed directly at "the DC's own IP changed."
+
+Rather than keep chasing one-off networking bugs per VM, the lab now routes everything through a single purpose-built router. This is the same reasoning that ruled out putting Routing and Remote Access on the domain controller in the first place, just applied more thoroughly: don't tangle routing, DHCP, and NAT roles up with AD roles, and don't scatter them across every VM either. pfSense CE:
+
+- centralizes DHCP, NAT, and gateway behavior in one predictable, purpose-built place instead of N independent per-VM configurations
+- comes with a real firewall to build rules and logging on top of later — a natural step toward the IDS/detection side of this lab (Suricata is available as a pfSense package if that gets picked up)
+- means every domain VM only needs a single network adapter going forward, simplifying every future VM added to the lab
+
+## Directory Structure
+
+The OU tree is built to mirror a small-to-mid-size organization rather than a flat, default install:
+
+```text
+corp.lab
+└── Corp
+    ├── IT
+    │   ├── Users
+    │   ├── Groups     (IT-Staff)
+    │   └── Computers
+    ├── Finance        (Finance-Staff)
+    ├── Sales          (Sales-Staff)
+    ├── HR             (HR-Staff)
+    ├── Marketing      (Marketing-Staff)
+    ├── Engineering    (Engineering-Staff)
+    ├── Operations     (Operations-Staff)
+    ├── Support        (Support-Staff)
+    └── Helpdesk group (top-level, for delegated password-reset rights)
+```
+
+Each department OU has its own `Users`, `Groups`, and `Computers` sub-OUs, and its own `<Department>-Staff` security group. A top-level `Helpdesk` group exists separately, scoped for a single delegated permission (password resets) rather than broad admin rights — the point being to demonstrate least-privilege delegation, not just run everything as Domain Admin.
+
+<Note>
+  Domain-joined machines like `CLIENT01` land in AD's default `Computers` container when joined the standard way, not directly into a department's `Computers` sub-OU — moving them into the matching department OU is still a manual (or scripted) step, not yet automated in this lab.
+</Note>
+
+How this structure gets built — entirely via PowerShell rather than manually clicking through Active Directory Users and Computers — is covered on the [Configuration](/projects/ad-homelab/configuration) page.
