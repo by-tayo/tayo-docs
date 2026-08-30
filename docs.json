@@ -66,6 +66,7 @@
               "projects/ad-homelab/architecture",
               "projects/ad-homelab/build",
               "projects/ad-homelab/configuration",
+              "projects/ad-homelab/truenas",
               "projects/ad-homelab/validation"
             ]
           },

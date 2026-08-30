@@ -38,6 +38,7 @@ Host (32GB RAM, VMware Workstation Pro)
  │    ├─ DC01 — Windows Server 2022 Datacenter, static 192.168.125.10 (Sysmon + Splunk UF)
  │    ├─ CLIENT01 — Windows 11, static 192.168.125.20, joined to corp.lab (Sysmon + Splunk UF)
  │    ├─ LOGSRV — Ubuntu Server 26.04 LTS, static 192.168.125.30, Splunk Enterprise on :9997
+ │    ├─ STORAGE01 — TrueNAS SCALE 25.10.6, static 192.168.125.40, ZFS pool `tank`, AD-joined, SMB share, syslog → LOGSRV:5514
  │    └─ Kali attacker VM — DHCP 192.168.125.101, BloodHound CE via Docker
  └─ VMnet8 (NAT — VMware-managed)
       └─ pfSense's WAN interface only — internet access for the whole lab network
@@ -77,6 +78,11 @@ pfSense CE now owns routing, DHCP, and firewalling for the entire lab network �
 
     → [Building the Domain Controller](/projects/ad-homelab/build) · [Status & Next Steps](/projects/ad-homelab/validation)
   </Step>
+  <Step title="TrueNAS Storage Node">
+    TrueNAS SCALE stood up as `STORAGE01` at `192.168.125.40`: single-disk ZFS pool `tank` (past a VMware-specific duplicate-serial issue solved via `disk.EnableUUID`), AD-joined to `corp.lab`, `Sharing` SMB share with an NFSv4 ACL scoped to the `operations-staff` AD group, end-to-end write test from `CLIENT01` as non-admin `aking`, and TrueNAS syslog forwarded into Splunk on LOGSRV over UDP `5514`. **Complete**.
+
+    → [TrueNAS Storage](/projects/ad-homelab/truenas)
+  </Step>
   <Step title="Validation & Next Steps">
     What's been verified so far, and what remains as small loose ends now that the attack/detection scenario is complete.
 
@@ -102,6 +108,9 @@ pfSense CE now owns routing, DHCP, and firewalling for the entire lab network �
 - Offensive AD enumeration — BloodHound Community Edition deployed on Kali via Docker Compose, `bloodhound-ce-python` collector run remotely over LDAP with low-privilege credentials, and Cypher pathfinding queries used to check for privilege-escalation paths and Kerberoastable accounts
 - Kerberoasting (offensive) — deliberately weak `svc_sql` service account with an SPN registered, `impacket-GetUserSPNs` used to extract a TGS-REP hash as a low-privilege domain user, and offline cracking with `hashcat` (mode `13100`) using both `rockyou.txt` and a targeted custom wordlist
 - Kerberos ticket-request detection (defensive) — Windows Security Event ID `4769` on DC01 correlated in Splunk to identify the requesting account, the source IP, and RC4 (`0x17`) ticket encryption as a real-world Kerberoasting indicator, on the same Sysmon \+ Splunk pipeline stood up earlier
+- TrueNAS SCALE / ZFS storage administration — pool creation on a single virtual disk, diagnosing a VMware-specific duplicate-serial-number failure by bypassing the GUI (`midclt call pool.create`) and reading the middleware error directly, then fixing it via `disk.EnableUUID = "TRUE"` in the `.vmx` and confirming with `udevadm`
+- Domain-joined SMB file services on non-Windows — TrueNAS AD join under `corp.lab` with Kerberos User credentials, NFSv4 ACL mapping a real AD group (`operations-staff`) to Modify on a dataset, and end-to-end write testing from `CLIENT01` as an unprivileged domain user (`aking`) rather than an admin
+- Cross-platform log ingestion into Splunk — remote syslog forwarding from TrueNAS into an existing Splunk instance over UDP on a non-privileged port (`5514`), including diagnosing the port-`514` bind failure via `ps -ef` and `ss -tulnp` as a service-account permissions issue rather than a port conflict
 
 <Note>
   This lab is actively being built. This documentation is updated as each phase completes, so treat later pages as more current than earlier ones.

@@ -32,12 +32,19 @@ This lab is a work in progress rather than a finished build. This page tracks wh
 | Offline password crack | `rockyou.txt` missed (as expected for a 2009 corpus vs. a newer-style password); a small custom season/year wordlist recovered `Summer2024!` via `hashcat -m 13100` |
 | Attack detected in Splunk | `index=main host=DC01 EventCode=4769 Service_Name=svc_sql` returned the exact ticket request: `Account_Name=jsmith@CORP.LAB`, `Client_Address=192.168.125.101` (Kali), `Ticket_Encryption_Type=0x17` (RC4) — full offense-to-detection loop closed on the existing Sysmon \+ Splunk pipeline with no new instrumentation |
 | pfSense migration cleanup | Redundant `VMnet8` NAT adapters fully removed from DC01 and `CLIENT01` (not just disconnected) — both VMs now have a single `VMnet1` adapter, routing exclusively through pfSense |
+| TrueNAS storage node online | `STORAGE01` (TrueNAS SCALE 25.10.6) built at `192.168.125.40` with a healthy single-disk ZFS pool `tank`, past a VMware duplicate-serial issue resolved via `disk.EnableUUID = "TRUE"` in the `.vmx` and confirmed with `udevadm` |
+| TrueNAS AD domain join | `STORAGE01` joined to `corp.lab` under **Credentials → Directory Services** with Kerberos User credentials — Active Directory Status **HEALTHY** after removing a non-AD secondary DNS entry (pfSense) that was breaking SRV lookups |
+| SMB share with AD-group ACL | `Sharing` share on `/mnt/tank/shared` with an NFSv4 ACL granting **Modify** to `CORP\operations-staff`, plus the duplicate `shared` entry (case-collision workaround) cleaned up |
+| SMB write test as non-admin domain user | `aking` (member of `operations-staff`, not a domain admin) logged in on `CLIENT01`, browsed `\\192.168.125.40\Sharing` over SMB, and created `test.txt` — proving the full AD-group → NFSv4 ACL → SMB share chain end to end |
+| TrueNAS syslog into Splunk | TrueNAS syslog forwarded to LOGSRV over UDP `5514` (moved off privileged port `514` after the Splunk service account couldn't bind to it); `source="syslog" index="main" sourcetype="syslog" host=192.168.125.40` returns live, ongoing events |
 
 ## In Progress / Queued
 
-<Note>
-  All planned phases are complete. Future work will be tracked here as new scenarios get added.
-</Note>
+<Steps>
+  <Step title="TrueNAS ↔ Tailscale off-lab backup (deferred)">
+    Connect `STORAGE01` to Tailscale as an external backup target for the separate [CloudHUB](https://github.com/by-tayo/CloudHUB) project (self-hosted Nextcloud on AWS). Deferred until CloudHUB's own backup story is ready.
+  </Step>
+</Steps>
 
 ## Why This Page Reads Like a Checklist
 

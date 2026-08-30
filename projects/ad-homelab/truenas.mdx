@@ -1,0 +1,230 @@
+---
+title: "TrueNAS SCALE — AD-Joined Storage Node with Splunk Forwarding"
+sidebarTitle: "TrueNAS Storage"
+description: "Adding TrueNAS SCALE as a domain-joined ZFS storage node in corp.lab — pool creation, AD join, AD-group-mapped SMB share, and Splunk log forwarding."
+---
+
+This page adds a new storage node to the `corp.lab` lab: a **TrueNAS SCALE** VM (`STORAGE01`, `192.168.125.40`) that joins the domain, exposes an SMB share whose write access is scoped to a real AD group, and forwards its own system logs into the existing Splunk instance on LOGSRV. It's the same logging pattern already used by DC01 and `CLIENT01`, extended to a Linux/FreeBSD-style host so the pipeline covers Windows and non-Windows telemetry together.
+
+<Info>
+  Environment: VMware Workstation Pro. TrueNAS SCALE 25.10.6 (Community Edition), single virtual disk (`sdb`, 80 GiB) on top of the existing OS disk (`sda`). Static `192.168.125.40` on `VMnet1`, DNS pointed at DC01 (`192.168.125.10`) only. Splunk Enterprise on LOGSRV (`192.168.125.30`).
+</Info>
+
+By the end of this build:
+
+- TrueNAS has a static IP on the lab network and a healthy single-disk ZFS pool (`tank`)
+- TrueNAS is domain-joined to `corp.lab` with a healthy AD connection
+- A `shared` dataset on `tank` is exposed over SMB, with write access scoped to the `operations-staff` AD group via a native NFSv4 ACL
+- End-to-end write access was proven from `CLIENT01` as a real, non-admin domain user (`aking`) rather than an admin
+- TrueNAS syslog events flow into Splunk on LOGSRV over UDP `5514`, verified with a live search
+
+## Network Configuration
+
+Before anything else, TrueNAS needs a static IP so the rest of the lab (and the domain) can reach it reliably. Set from **Network → Settings**, configuring the interface's IPv4 address, the gateway, and DNS.
+
+<Frame caption="Setting the default gateway and primary DNS server during interface configuration.">
+  ![TrueNAS Set Gateway and DNS dialog](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/images/truenas/01-network-gateway-dns.png)
+</Frame>
+
+<Warning>
+  Only configure DC01 (`192.168.125.10`) as the DNS server. A secondary DNS entry that isn't AD-aware (e.g. pfSense at `192.168.125.254`) will later break the AD domain join — TrueNAS validates SRV record lookups against _every_ configured nameserver, not just the primary. This bit later on and is covered under [Active Directory Domain Join](#active-directory-domain-join).
+</Warning>
+
+## Creating the ZFS Pool
+
+This was the longest part of the build — a genuinely non-obvious VMware-specific issue that looked like a wipe problem but wasn't.
+
+The **Storage → Create Pool** wizard repeatedly showed no available disks to select, even after wiping the target disk (`sdb`) multiple ways: Quick Wipe, Full with zeros, `wipefs`/`blkid` from the TrueNAS Shell.
+
+<Frame caption="Storage Dashboard with no pool created yet.">
+  ![Storage Dashboard showing No Pools](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/images/truenas/02-storage-no-pools.png)
+</Frame>
+
+<Frame caption="Manual Disk Selection reporting no unassigned disks, despite sdb existing and being 80 GiB.">
+  ![Manual Disk Selection showing No Unassigned Disks](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/images/truenas/03-manual-selection-no-disks.png)
+</Frame>
+
+### Root cause
+
+Bypassing the GUI and calling the middleware directly surfaced the real error:
+
+```bash
+sudo midclt call pool.create '{"name": "tank", "topology": {"data": [{"type": "STRIPE", "disks": ["sdb"]}]}}'
+
+# → FAILED: [EINVAL] pool_create.topology: Disks have duplicate serial numbers: None (sda, sdb).
+```
+
+<Frame caption="Job status output confirming the duplicate-serial validation failure.">
+  ![core.get\_jobs output showing FAILED with duplicate serial numbers error](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/images/truenas/04-pool-create-job-failed.png)
+</Frame>
+
+**VMware Workstation doesn't assign virtual SCSI disks real serial numbers by default.** ZFS's disk-uniqueness safety check silently excludes any disk without a distinct serial — which is also why the GUI disk pickers came up empty. It wasn't a wipe problem at all; both `sda` and `sdb` reported a serial of `None`, so ZFS treated them as the same physical device and refused to use either.
+
+### The fix
+
+<Steps>
+  <Step title="Enable disk UUIDs in the VM's .vmx file">
+    Powered off the VM and edited the `.vmx` directly, adding:
+
+    ```text
+    disk.EnableUUID = "TRUE"
+    ```
+
+    This tells VMware to expose a real, unique identifier for each virtual disk to the guest OS.
+  </Step>
+  <Step title="Confirm the guest now sees a real serial">
+    Rebooted and confirmed via `udevadm` that `sdb` now reported a real, distinct serial:
+
+    <Frame caption="udevadm confirming sdb now has a real, unique serial identifier after the .vmx fix.">
+      ![udevadm output showing sdb serial number](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/images/truenas/05-udevadm-serial-fix.png)
+    </Frame>
+  </Step>
+  <Step title="Create the pool with an explicit override">
+    TrueNAS's own validation still initially reported stale `None` serials from its cached DB state, so the pool was created with an explicit override flag:
+
+    ```bash
+    sudo midclt call pool.create '{"name": "tank", "topology": {"data": [{"type": "STRIPE", "disks": ["sdb"]}]}, "allow_duplicate_serials": true}'
+    ```
+
+    That succeeded — pool `tank` came up healthy and online.
+
+    <Frame caption="The tank pool live: single-disk stripe VDEV, 80 GiB, online with no errors.">
+      ![Storage Dashboard showing tank pool healthy and online](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/images/truenas/06-tank-pool-healthy.png)
+    </Frame>
+  </Step>
+</Steps>
+
+<Tip>
+  If you hit "no disks available" in a Create Pool wizard inside VMware Workstation, check `disk.EnableUUID` in the `.vmx` before assuming it's a wipe or permissions issue. The symptom in the GUI (empty picker) looks nothing like the actual cause (identical `None` serials failing the ZFS uniqueness check), which is why it eats time.
+</Tip>
+
+## Active Directory Domain Join
+
+Domain join is configured under **Credentials → Directory Services**, using the Kerberos User credential type.
+
+<Frame caption="Directory Services starting state — nothing configured yet.">
+  ![Directory Services page showing directory services are disabled](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/images/truenas/07-directory-services-disabled.png)
+</Frame>
+
+<Frame caption="The Directory Services Configuration form: Kerberos User credentials plus Active Directory domain fields.">
+  ![Directory Services Configuration form with Kerberos User fields](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/images/truenas/08-ad-join-form.png)
+</Frame>
+
+Two distinct failures came up before the join succeeded:
+
+**DNS discovery failure** — `CORP.LAB: Failed to discover Active Directory Domain Controller for domain.`
+
+<Frame caption="Initial join attempt failing on AD domain controller discovery.">
+  ![Failed to discover Active Directory Domain Controller error](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/images/truenas/09-ad-join-dns-error.png)
+</Frame>
+
+Direct Shell tests showed DNS was actually fine — the `_ldap._tcp.corp.lab` SRV record resolved and DC01 answered pings — so this was a transient validation/propagation timing issue on the TrueNAS side, not a real misconfiguration. Retrying the join worked.
+
+<Frame caption="Manually verifying the _ldap._tcp SRV record resolves and DC01 responds to ping.">
+  ![Shell output of host -t SRV and ping to DC01](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/images/truenas/10-srv-lookup-ping-shell.png)
+</Frame>
+
+**Secondary DNS server failure** — `Forward lookup of _kerberos._tcp.CORP.LAB. failed with nameserver 192.168.125.254.` This one was real: a secondary DNS entry (pfSense, not AD-aware) had been added to the network config, and TrueNAS validates SRV lookups against _every_ configured nameserver. Removing the secondary and keeping only DC01 (`192.168.125.10`) resolved it. After that, the join succeeded:
+
+<Frame caption="Directory Services showing Active Directory Status: HEALTHY, domain CORP.LAB.">
+  ![Directory Services page showing Active Directory Status HEALTHY](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/images/truenas/11-ad-status-healthy.png)
+</Frame>
+
+## Dataset and AD-Group ACL
+
+With AD joined, a dedicated dataset was created on `tank` to back the SMB share, then permissions were narrowed to a real AD group instead of being left wide open.
+
+<Frame caption="Creating the shared dataset under tank, using the Generic preset.">
+  ![Add Dataset dialog with name shared under tank](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/images/truenas/12-add-dataset-shared.png)
+</Frame>
+
+Key dataset settings for SMB use:
+
+- **ACL Type:** NFSv4 (Windows-style ACLs)
+- **ACL Mode:** Restricted — recommended for SMB-managed datasets, since it prevents `chmod` from silently stripping the Windows-style ACL
+
+<Frame caption="Default NFSv4 ACL on the new dataset before any AD group is added.">
+  ![ACL Editor showing default owner@, group@, everyone@ entries](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/images/truenas/13-acl-editor-defaults.png)
+</Frame>
+
+An ACL entry was then added mapping the `CORP\operations-staff` AD group to **Modify** permissions:
+
+<Frame caption="The operations-staff AD group added to the dataset's ACL with Modify access.">
+  ![Permissions panel showing Group CORP operations-staff Allow Modify](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/images/truenas/14-acl-operations-staff-group.png)
+</Frame>
+
+## SMB Share
+
+The share is created under **Shares → Windows (SMB) Shares**, pointing at `/mnt/tank/shared`.
+
+<Warning>
+  TrueNAS SCALE's SMB share names collide case-insensitively. Naming a new share `Shared` silently conflicted with an existing share literally named `shared` (both pointed at the same path). The collision wasn't obvious in the UI, and the practical workaround was naming the working share `Sharing` instead, then deleting the duplicate `shared` entry afterward via the three-dot menu → Delete so only one clean share remained.
+</Warning>
+
+<Frame caption="Two SMB shares pointing at the same path due to the case-insensitive naming collision — the duplicate was removed afterward.">
+  ![Shares page showing duplicate Sharing and shared entries](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/images/truenas/15-smb-shares-duplicate.png)
+</Frame>
+
+## End-to-End Verification from CLIENT01
+
+Configuration alone doesn't prove the ACL mapping actually works — so the share was tested from a real domain client, logged in as a genuine **non-admin** domain user (`aking`, a member of `operations-staff`) rather than an admin account. This is the difference between "the ACL exists" and "the ACL grants the right people the right access."
+
+<Frame caption="CLIENT01 browsing \\192.168.125.40\Sharing over SMB — empty, before the write test.">
+  ![Windows File Explorer browsing the empty Sharing folder](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/images/truenas/16-client01-empty-share.png)
+</Frame>
+
+<Frame caption="Confirming the logged-in account on CLIENT01 is the non-admin test user, aking.">
+  ![Windows taskbar showing logged-in user aking](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/images/truenas/17-client01-aking-logged-in.png)
+</Frame>
+
+<Frame caption="test.txt successfully created in the share by aking — proof the AD-group ACL grants real write access.">
+  ![File Explorer showing test.txt created in the Sharing folder](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/images/truenas/18-client01-testtxt-created.png)
+</Frame>
+
+The full chain is confirmed working end to end: AD group membership → NFSv4 ACL on the dataset → SMB share → actual write access for a real, unprivileged domain user.
+
+## Splunk Log Forwarding
+
+The last step wires TrueNAS's system logs into the lab's existing Splunk instance on LOGSRV, matching how DC01 and `CLIENT01` already report in through the Universal Forwarder.
+
+On TrueNAS, under **System Settings → Advanced Settings → Syslog**, a remote syslog server was configured over UDP:
+
+<Frame caption="TrueNAS syslog forwarding configured to send to LOGSRV over UDP.">
+  ![TrueNAS Syslog settings showing server 192.168.125.30 UDP](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/images/truenas/19-truenas-syslog-config.png)
+</Frame>
+
+On LOGSRV, a Splunk UDP Data Input was created to receive it: **Settings → Data Inputs → UDP**, source type `syslog`, index `main`.
+
+<Frame caption="Configuring the Splunk UDP input to listen for TrueNAS's forwarded syslog traffic.">
+  ![Splunk Add Data TCP UDP source configuration screen](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/images/truenas/20-splunk-udp-input-setup.png)
+</Frame>
+
+<Warning>
+  The first attempt on port `514` failed with `UDP port 514 not available`. Port 514 is privileged (\<1024), and Splunk was running under a non-root service account (confirmed via `ps -ef | grep splunkd`), so it couldn't bind to it. `ss -tulnp | grep 514` confirmed nothing else was actually squatting on the port — it was purely a permissions issue. Fix: use a non-privileged port (`5514`) on both the Splunk input and TrueNAS's syslog server entry (`192.168.125.30:5514`), instead of fighting the OS for `514`.
+</Warning>
+
+Verified with a live search once both sides were reconfigured on port `5514`:
+
+```spl
+source="syslog" index="main" sourcetype="syslog" host=192.168.125.40
+```
+
+<Frame caption="Splunk search confirming TrueNAS syslog events actively arriving — 10 events over the trailing 60 minutes, including routine background service activity, proving the feed is live and ongoing, not a one-time burst.">
+  ![Splunk search results showing TrueNAS syslog events](https://raw.githubusercontent.com/by-tayo/ad-homelab/main/images/truenas/21-splunk-events-flowing.png)
+</Frame>
+
+## Result
+
+TrueNAS SCALE is now a fully integrated storage node in the `corp.lab` lab:
+
+| Component | Status |
+| --- | --- |
+| Static networking | Configured, DNS pointed at DC01 only |
+| ZFS pool (`tank`) | Online, healthy, single-disk stripe |
+| AD domain join | `CORP.LAB`, status HEALTHY |
+| SMB share (`Sharing`) | AD-group-mapped ACL, write-tested from `CLIENT01` as `aking` |
+| Splunk log forwarding | Live, verified via search, UDP `5514` |
+
+<Note>
+  **Deferred / not yet done:** connecting TrueNAS to Tailscale as an external backup target for the separate [CloudHUB](https://github.com/by-tayo/CloudHUB) project (self-hosted Nextcloud on AWS). Tracked on [Status & Next Steps](/projects/ad-homelab/validation).
+</Note>

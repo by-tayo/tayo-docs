@@ -25,11 +25,12 @@ The network went through one real redesign. It originally had every lab VM carry
 pfSense (LAN)      192.168.125.254   (VMnet1, static)  +  WAN adapter (VMnet8, DHCP)
 DC01               192.168.125.10    (VMnet1, static)  → forwards Windows + Sysmon logs to LOGSRV:9997
 CLIENT01           192.168.125.20    (VMnet1, static)  → forwards Windows + Sysmon logs to LOGSRV:9997
-LOGSRV             192.168.125.30    (VMnet1, static)  — Ubuntu Server 26.04 LTS, Splunk Enterprise, receiving on 9997
+LOGSRV             192.168.125.30    (VMnet1, static)  — Ubuntu Server 26.04 LTS, Splunk Enterprise, receiving on 9997 (UF) + 5514/UDP (syslog)
+STORAGE01          192.168.125.40    (VMnet1, static)  — TrueNAS SCALE 25.10.6, ZFS pool `tank`, AD-joined, SMB share, syslog → LOGSRV:5514
 ATTACKER (Kali)    192.168.125.101   (VMnet1, DHCP)    — BloodHound CE via Docker Compose
 ```
 
-LOGSRV is fully built and actively indexing forwarded events. DC01 and `CLIENT01` each run Sysmon (SwiftOnSecurity config) plus the Splunk Universal Forwarder, sending Windows Event Logs and the Sysmon Operational channel to Splunk on `LOGSRV:9997`. The Kali attacker VM is now live on `VMnet1` with BloodHound Community Edition installed for offensive AD enumeration and attack-path analysis.
+LOGSRV is fully built and actively indexing forwarded events. DC01 and `CLIENT01` each run Sysmon (SwiftOnSecurity config) plus the Splunk Universal Forwarder, sending Windows Event Logs and the Sysmon Operational channel to Splunk on `LOGSRV:9997`. `STORAGE01` (TrueNAS SCALE) is domain-joined to `corp.lab`, exposes an SMB share off a ZFS pool with an AD-group-mapped ACL, and forwards its own syslog into the same Splunk instance over UDP `5514` — extending the pipeline beyond Windows-only telemetry to the storage node. The Kali attacker VM is live on `VMnet1` with BloodHound Community Edition installed for offensive AD enumeration and attack-path analysis. See [TrueNAS Storage](/projects/ad-homelab/truenas) for the storage-node build.
 
 <Tip>
   `.1` on `VMnet1` is already claimed by the host machine's own virtual adapter, which VMware creates automatically for host-only networks — that's why pfSense's LAN interface sits at `.254` instead of the more conventional `.1`. DHCP is enabled on pfSense's LAN interface with a scope reserved for future/ad-hoc VMs (`192.168.125.100`–`199`), but the core domain machines keep static IPs assigned by hand for predictability.
