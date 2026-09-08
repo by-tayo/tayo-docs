@@ -67,8 +67,8 @@
               "projects/ad-homelab/build",
               "projects/ad-homelab/configuration",
               "projects/ad-homelab/truenas",
-              "projects/ad-homelab/validation",
-              "projects/ad-homelab/pfsense-openvpn"
+              "projects/ad-homelab/pfsense-openvpn",
+              "projects/ad-homelab/validation"
             ]
           },
           {
